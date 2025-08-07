@@ -18,30 +18,62 @@
 
 const char *key_names[MAX_KEYCODE] = {
     [0 ... MAX_KEYCODE-1] = "UNKNOWN",
+
+    // Alphanumeric block
     [1] = "KEY_ESC",
     [2] = "KEY_1", [3] = "KEY_2", [4] = "KEY_3", [5] = "KEY_4",
     [6] = "KEY_5", [7] = "KEY_6", [8] = "KEY_7", [9] = "KEY_8",
-    [10] = "KEY_9", [11] = "KEY_0", [12] = "KEY_MINUS", [13] = "KEY_EQUAL",
-    [14] = "KEY_BACKSPACE", [15] = "KEY_TAB", [16] = "KEY_Q", [17] = "KEY_W",
-    [18] = "KEY_E", [19] = "KEY_R", [20] = "KEY_T", [21] = "KEY_Y",
-    [22] = "KEY_U", [23] = "KEY_I", [24] = "KEY_O", [25] = "KEY_P",
-    [26] = "KEY_LEFTBRACE", [27] = "KEY_RIGHTBRACE", [28] = "KEY_ENTER",
-    [29] = "KEY_LEFTCTRL", [30] = "KEY_A", [31] = "KEY_S", [32] = "KEY_D",
-    [33] = "KEY_F", [34] = "KEY_G", [35] = "KEY_H", [36] = "KEY_J",
-    [37] = "KEY_K", [38] = "KEY_L", [39] = "KEY_SEMICOLON", [40] = "KEY_APOSTROPHE",
+    [10] = "KEY_9", [11] = "KEY_0",
+    [12] = "KEY_MINUS", [13] = "KEY_EQUAL",
+    [14] = "KEY_BACKSPACE", [15] = "KEY_TAB",
+    [16] = "KEY_Q", [17] = "KEY_W", [18] = "KEY_E", [19] = "KEY_R",
+    [20] = "KEY_T", [21] = "KEY_Y", [22] = "KEY_U", [23] = "KEY_I",
+    [24] = "KEY_O", [25] = "KEY_P",
+    [26] = "KEY_LEFTBRACE", [27] = "KEY_RIGHTBRACE",
+    [28] = "KEY_ENTER", [29] = "KEY_LEFTCTRL",
+    [30] = "KEY_A", [31] = "KEY_S", [32] = "KEY_D", [33] = "KEY_F",
+    [34] = "KEY_G", [35] = "KEY_H", [36] = "KEY_J", [37] = "KEY_K",
+    [38] = "KEY_L", [39] = "KEY_SEMICOLON", [40] = "KEY_APOSTROPHE",
     [41] = "KEY_GRAVE", [42] = "KEY_LEFTSHIFT", [43] = "KEY_BACKSLASH",
     [44] = "KEY_Z", [45] = "KEY_X", [46] = "KEY_C", [47] = "KEY_V",
-    [48] = "KEY_B", [49] = "KEY_N", [50] = "KEY_M", [51] = "KEY_COMMA",
-    [52] = "KEY_DOT", [53] = "KEY_SLASH", [54] = "KEY_RIGHTSHIFT",
-    [55] = "KEY_KPASTERISK", [56] = "KEY_LEFTALT", [57] = "KEY_SPACE",
-    [58] = "KEY_CAPSLOCK", [59] = "KEY_F1", [60] = "KEY_F2", [61] = "KEY_F3",
-    [62] = "KEY_F4", [63] = "KEY_F5", [64] = "KEY_F6", [65] = "KEY_F7",
-    [66] = "KEY_F8", [67] = "KEY_F9", [68] = "KEY_F10", [87] = "KEY_F11",
-    [88] = "KEY_F12",
+    [48] = "KEY_B", [49] = "KEY_N", [50] = "KEY_M",
+    [51] = "KEY_COMMA", [52] = "KEY_DOT", [53] = "KEY_SLASH",
+    [54] = "KEY_RIGHTSHIFT", [55] = "KEY_KPASTERISK",
+    [56] = "KEY_LEFTALT", [57] = "KEY_SPACE", [58] = "KEY_CAPSLOCK",
+
+    // Function keys
+    [59] = "KEY_F1", [60] = "KEY_F2", [61] = "KEY_F3", [62] = "KEY_F4",
+    [63] = "KEY_F5", [64] = "KEY_F6", [65] = "KEY_F7", [66] = "KEY_F8",
+    [67] = "KEY_F9", [68] = "KEY_F10", [87] = "KEY_F11", [88] = "KEY_F12",
+
+    // Navigation / editing
+    [99]  = "KEY_SYSRQ", [70] = "KEY_SCROLLLOCK", [119] = "KEY_PAUSE",
+    [110] = "KEY_INSERT", [102] = "KEY_HOME", [104] = "KEY_PAGEUP",
+    [111] = "KEY_DELETE", [107] = "KEY_END", [109] = "KEY_PAGEDOWN",
+    [106] = "KEY_RIGHT", [105] = "KEY_LEFT",
+    [108] = "KEY_DOWN", [103] = "KEY_UP",
+
+    // Keypad
+    [69]  = "KEY_NUMLOCK", [98]  = "KEY_KPSLASH", [55] = "KEY_KPASTERISK",
+    [74]  = "KEY_KPMINUS", [78]  = "KEY_KPPLUS", [96] = "KEY_KPENTER",
+    [79]  = "KEY_KP1", [80] = "KEY_KP2", [81] = "KEY_KP3",
+    [75]  = "KEY_KP4", [76] = "KEY_KP5", [77] = "KEY_KP6",
+    [71]  = "KEY_KP7", [72] = "KEY_KP8", [73] = "KEY_KP9",
+    [82]  = "KEY_KP0", [83] = "KEY_KPDOT",
+
+    // Extra modifiers
+    [97]  = "KEY_RIGHTCTRL", [100] = "KEY_RIGHTALT",
+    [125] = "KEY_LEFTMETA", [126] = "KEY_RIGHTMETA",
+    [127] = "KEY_COMPOSE",
+
+    // Multimedia / special keys
     [113] = "KEY_MUTE", [114] = "KEY_VOLUMEDOWN", [115] = "KEY_VOLUMEUP",
     [163] = "KEY_NEXTSONG", [164] = "KEY_PLAYPAUSE", [165] = "KEY_STOPCD",
-    [166] = "KEY_PREVIOUSSONG"
+    [166] = "KEY_PREVIOUSSONG",
+    [140] = "KEY_CALC", [215] = "KEY_EMAIL", [172] = "KEY_HOMEPAGE",
+    [217] = "KEY_SEARCH",
 };
+
 
 static uint64_t now_ms() {
     struct timespec ts;
@@ -144,20 +176,20 @@ int main(int argc, char *argv[]) {
     }
 
     struct input_event ev;
-    uint64_t last_up_time[MAX_KEYCODE] = {0};
-    uint8_t emitted_down[MAX_KEYCODE] = {0};
+    uint64_t debounce_until[MAX_KEYCODE] = {0};
+    uint8_t key_state[MAX_KEYCODE] = {0}; // 0 = up, 1 = down
 
     while (read(in_fd, &ev, sizeof(ev)) == sizeof(ev)) {
         if (ev.type != EV_KEY)
             continue;
 
         int code = ev.code;
-        int value = ev.value;
+        int value = ev.value; // 0=up, 1=down, 2=autorepeat
 
         if (code < 0 || code >= MAX_KEYCODE)
             continue;
 
-        // Allow volume knob events through
+        // Allow volume knob events through unfiltered
         if (code == 113 || code == 114 || code == 115) {
             emit(out_fd, EV_KEY, code, value, &ev.time);
             emit(out_fd, EV_SYN, SYN_REPORT, 0, &ev.time);
@@ -166,25 +198,26 @@ int main(int argc, char *argv[]) {
 
         uint64_t t_now = now_ms();
 
-        if (value == 0) {  // Key up
-            if (emitted_down[code]) {
-                last_up_time[code] = t_now;
-                emit(out_fd, EV_KEY, code, value, &ev.time);
-                emit(out_fd, EV_SYN, SYN_REPORT, 0, &ev.time);
-                emitted_down[code] = 0;
-            }
-        } else if (value == 1) {  // Key down
-            uint64_t delta = t_now - last_up_time[code];
-            if (delta < (uint64_t)timeout_ms) {
-                printf("Debounced: %s (code %d), %" PRIu64 " ms since last up\n",
-                       key_names[code], code, delta);
-                fflush(stdout);
-                emitted_down[code] = 0;
-            } else {
-                emit(out_fd, EV_KEY, code, value, &ev.time);
-                emit(out_fd, EV_SYN, SYN_REPORT, 0, &ev.time);
-                emitted_down[code] = 1;
-            }
+        // Block events if still in debounce window
+        if (t_now < debounce_until[code]) {
+            printf("Debounced: %s (code %d) during active window\n",
+                   key_names[code], code);
+            fflush(stdout);
+            continue;
+        }
+
+        if (value == 1) { // Key down
+            debounce_until[code] = t_now + timeout_ms; // Start debounce window
+            key_state[code] = 1;
+            emit(out_fd, EV_KEY, code, 1, &ev.time);
+            emit(out_fd, EV_SYN, SYN_REPORT, 0, &ev.time);
+        } else if (value == 0) { // Key up
+            key_state[code] = 0;
+            emit(out_fd, EV_KEY, code, 0, &ev.time);
+            emit(out_fd, EV_SYN, SYN_REPORT, 0, &ev.time);
+        } else if (value == 2) { // Auto-repeat
+            emit(out_fd, EV_KEY, code, 2, &ev.time);
+            emit(out_fd, EV_SYN, SYN_REPORT, 0, &ev.time);
         }
     }
 
