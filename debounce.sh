@@ -1,0 +1,2 @@
+#!/bin/sh
+debounce usb-Corsair_CORSAIR_K70_CORE_RGB_Mechanical_Gaming_Keyboard_0601900FAFC9182963D2B897F5001BC4-event-kbd 15
