@@ -12,6 +12,8 @@
 #include <inttypes.h>
 #include <sys/ioctl.h>
 #include <limits.h>
+#include <poll.h>
+#include <sys/timerfd.h>
 
 #define MAX_KEYCODE 256
 #define DEV_BASE "/dev/input/"
@@ -74,13 +76,13 @@ const char *key_names[MAX_KEYCODE] = {
     [217] = "KEY_SEARCH",
 };
 
-static uint64_t now_ms() {
+static uint64_t now_ms(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
-    return ((uint64_t)ts.tv_sec * 1000) + (ts.tv_nsec / 1000000);
+    return ((uint64_t)ts.tv_sec * 1000ULL) + (ts.tv_nsec / 1000000ULL);
 }
 
-void emit(int fd, int type, int code, int value, struct timeval *tv) {
+static void emit(int fd, int type, int code, int value, const struct timeval *tv) {
     struct input_event ev = {
         .type = type,
         .code = code,
@@ -90,7 +92,7 @@ void emit(int fd, int type, int code, int value, struct timeval *tv) {
     (void)write(fd, &ev, sizeof(ev));
 }
 
-int setup_uinput() {
+static int setup_uinput(void) {
     int fd = open("/dev/uinput", O_WRONLY | O_NONBLOCK);
     if (fd < 0) {
         perror("Cannot open /dev/uinput");
@@ -106,15 +108,16 @@ int setup_uinput() {
     struct uinput_user_dev uidev = {0};
     snprintf(uidev.name, UINPUT_MAX_NAME_SIZE, "debounced-virtual-keyboard");
     uidev.id.bustype = BUS_USB;
-    uidev.id.vendor = 0x1234;
+    uidev.id.vendor  = 0x1234;
     uidev.id.product = 0x5678;
     uidev.id.version = 1;
+
     (void)write(fd, &uidev, sizeof(uidev));
     ioctl(fd, UI_DEV_CREATE);
     return fd;
 }
 
-void print_help(const char *progname) {
+static void print_help(const char *progname) {
     fprintf(stdout,
         "Usage: %s <input-device-id> [timeout_ms]\n"
         "\n"
@@ -129,6 +132,32 @@ void print_help(const char *progname) {
         progname, DEV_BASE, progname, progname, progname
     );
 }
+
+static void arm_pending_timer(int tfd,
+                              const uint8_t pending_up[MAX_KEYCODE],
+                              const uint64_t debounce_until[MAX_KEYCODE]) {
+    uint64_t now = now_ms();
+    uint64_t min_due = UINT64_MAX;
+
+    for (int k = 0; k < MAX_KEYCODE; k++) {
+        if (pending_up[k] && debounce_until[k] < min_due) {
+            min_due = debounce_until[k];
+        }
+    }
+
+    struct itimerspec its = {0};
+    if (min_due != UINT64_MAX) {
+        int64_t diff_ms = (int64_t)(min_due - now);
+        if (diff_ms < 0) diff_ms = 0;
+        its.it_value.tv_sec  = (time_t)(diff_ms / 1000);
+        its.it_value.tv_nsec = (long)((diff_ms % 1000) * 1000000L);
+    } // else disarm (all zeros)
+
+    if (timerfd_settime(tfd, 0, &its, NULL) < 0) {
+        perror("timerfd_settime");
+    }
+}
+
 int main(int argc, char *argv[]) {
     if (argc == 1 || (argc > 1 && strcmp(argv[1], "--help") == 0)) {
         print_help(argv[0]);
@@ -141,7 +170,6 @@ int main(int argc, char *argv[]) {
     }
 
     int timeout_ms = 15;
-
     if (argc == 3) {
         timeout_ms = atoi(argv[2]);
         if (timeout_ms <= 0 || timeout_ms > 10000) {
@@ -167,90 +195,206 @@ int main(int argc, char *argv[]) {
 
     int out_fd = setup_uinput();
     if (out_fd < 0) {
+        ioctl(in_fd, EVIOCGRAB, 0);
         close(in_fd);
         return 255;
     }
 
+    // Timer for flushing delayed UPs exactly when their debounce expires
+    int tfd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
+    if (tfd < 0) {
+        perror("timerfd_create");
+        ioctl(out_fd, UI_DEV_DESTROY);
+        close(out_fd);
+        ioctl(in_fd, EVIOCGRAB, 0);
+        close(in_fd);
+        return 255;
+    }
+
+    // State
     struct input_event ev;
-    uint64_t debounce_until[MAX_KEYCODE] = {0};
-    uint8_t key_state[MAX_KEYCODE] = {0};
-    uint8_t seen_second_down[MAX_KEYCODE] = {0};
-    uint64_t last_event_time[MAX_KEYCODE] = {0};
-    while (read(in_fd, &ev, sizeof(ev)) == sizeof(ev)) {
-        if (ev.type != EV_KEY)
-            continue;
+    uint64_t debounce_until[MAX_KEYCODE]     = {0}; // last-down time + timeout
+    uint8_t  key_state[MAX_KEYCODE]          = {0};
+    uint8_t  seen_second_down[MAX_KEYCODE]   = {0};
+    uint64_t last_event_time[MAX_KEYCODE]    = {0};
 
-        int code = ev.code;
-        int value = ev.value;
+    // Delayed-UP tracking
+    uint8_t        pending_up[MAX_KEYCODE]   = {0};
+    struct timeval pending_up_time[MAX_KEYCODE];
 
-        if (code < 0 || code >= MAX_KEYCODE)
-            continue;
+    struct pollfd fds[2] = {
+        { .fd = in_fd, .events = POLLIN },
+        { .fd = tfd,   .events = POLLIN }
+    };
 
-            // Allow volume knob events through unfiltered
-        if (code == 113 || code == 114 || code == 115) {
-            emit(out_fd, EV_KEY, code, value, &ev.time);
-            emit(out_fd, EV_SYN, SYN_REPORT, 0, &ev.time);
-            continue;
+    // Disarm timer initially
+    arm_pending_timer(tfd, pending_up, debounce_until);
+
+    for (;;) {
+        int pr = poll(fds, 2, -1);
+        if (pr < 0) {
+            if (errno == EINTR) continue;
+            perror("poll");
+            break;
         }
 
-        uint64_t t_now = now_ms();
-        uint64_t time_since_press = (debounce_until[code] > 0)
-            ? (t_now + timeout_ms - debounce_until[code])
-            : 0;
-        uint64_t time_since_last_event = (last_event_time[code] > 0)
-            ? (t_now - last_event_time[code])
-            : 0;
-        last_event_time[code] = t_now;
-        if (value == 1) { // Key down
-            if (t_now < debounce_until[code]) {
-                seen_second_down[code] = 1;
-                printf("Debounced DOWN: %s (code %d) at %lums after press, %lums since last event\n",
-                       key_names[code], code, time_since_press, time_since_last_event);
-                fflush(stdout);
+        // Timer fired: flush any pending UPs whose debounce expired
+        if (fds[1].revents & POLLIN) {
+            uint64_t expirations = 0;
+            (void)read(tfd, &expirations, sizeof(expirations)); // drain
+
+            uint64_t t_flush = now_ms();
+            for (int k = 0; k < MAX_KEYCODE; k++) {
+                if (pending_up[k] && t_flush >= debounce_until[k]) {
+                    uint64_t time_since_press = t_flush + (uint64_t)timeout_ms - debounce_until[k];
+                    uint64_t time_since_last  = (last_event_time[k] > 0) ? (t_flush - last_event_time[k]) : 0;
+
+                    key_state[k]       = 0;
+                    pending_up[k]      = 0;
+                    seen_second_down[k]= 0; // reset bounce state after release
+                    last_event_time[k] = t_flush;
+
+                    printf("FLUSH UP: %s (code %d) at %" PRIu64 "ms after press, %" PRIu64 "ms since last event\n",
+                           key_names[k], k, time_since_press, time_since_last);
+                    fflush(stdout);
+
+                    emit(out_fd, EV_KEY, k, 0, &pending_up_time[k]);
+                    emit(out_fd, EV_SYN, SYN_REPORT, 0, &pending_up_time[k]);
+                }
+            }
+            // Re-arm timer to next pending
+            arm_pending_timer(tfd, pending_up, debounce_until);
+        }
+
+        // Input device has data
+        if (fds[0].revents & POLLIN) {
+            ssize_t r = read(in_fd, &ev, sizeof(ev));
+            if (r == 0) {
+                // EOF on device
+                break;
+            }
+            if (r < 0) {
+                if (errno == EAGAIN || errno == EINTR) continue;
+                perror("Read failed");
+                break;
+            }
+            if (r != sizeof(ev)) continue;
+
+            if (ev.type != EV_KEY)
+                continue;
+
+            int code  = ev.code;
+            int value = ev.value; // 0=up, 1=down, 2=autorepeat
+            if (code < 0 || code >= MAX_KEYCODE)
+                continue;
+
+            // Allow volume knob events through unfiltered
+            if (code == 113 || code == 114 || code == 115) {
+                emit(out_fd, EV_KEY, code, value, &ev.time);
+                emit(out_fd, EV_SYN, SYN_REPORT, 0, &ev.time);
                 continue;
             }
 
-            debounce_until[code] = t_now + timeout_ms; // Start debounce window
-            seen_second_down[code] = 0;
-            key_state[code] = 1;
-            printf("PASS DOWN: %s (code %d) at %lums after press, %lums since last event\n",
-                   key_names[code], code, time_since_press, time_since_last_event);
-            fflush(stdout);
-            emit(out_fd, EV_KEY, code, 1, &ev.time);
-            emit(out_fd, EV_SYN, SYN_REPORT, 0, &ev.time);
-        } else if (value == 0) { // Key up
-            if (t_now < debounce_until[code]) {
-                if (!seen_second_down[code]) {
-                    key_state[code] = 0;
-                    debounce_until[code] = 0;
-                    printf("PASS EARLY UP: %s (code %d) at %lums after press, %lums since last event\n",
-                           key_names[code], code, time_since_press, time_since_last_event);
-                    fflush(stdout);
-                    emit(out_fd, EV_KEY, code, 0, &ev.time);
-                    emit(out_fd, EV_SYN, SYN_REPORT, 0, &ev.time);
-                } else {
-                    printf("Debounced UP: %s (code %d) at %lums after press, %lums since last event\n",
-                           key_names[code], code, time_since_press, time_since_last_event);
-                    fflush(stdout);
-                }
+            uint64_t t_now = now_ms();
 
-            } else {
-                key_state[code] = 0;
-                printf("PASS UP: %s (code %d) at %lums after press, %lums since last event\n",
-                       key_names[code], code, time_since_press, time_since_last_event);
+            // If there is a pending UP for this key and its debounce has already expired,
+            // flush it immediately before processing the new event for consistency.
+            if (pending_up[code] && t_now >= debounce_until[code]) {
+                uint64_t time_since_press = t_now + (uint64_t)timeout_ms - debounce_until[code];
+                uint64_t time_since_last  = (last_event_time[code] > 0) ? (t_now - last_event_time[code]) : 0;
+
+                key_state[code]        = 0;
+                pending_up[code]       = 0;
+                seen_second_down[code] = 0;
+                last_event_time[code]  = t_now;
+
+                printf("FLUSH UP (inline): %s (code %d) at %" PRIu64 "ms after press, %" PRIu64 "ms since last event\n",
+                       key_names[code], code, time_since_press, time_since_last);
                 fflush(stdout);
-                emit(out_fd, EV_KEY, code, 0, &ev.time);
-                emit(out_fd, EV_SYN, SYN_REPORT, 0, &ev.time);
+
+                emit(out_fd, EV_KEY, code, 0, &pending_up_time[code]);
+                emit(out_fd, EV_SYN, SYN_REPORT, 0, &pending_up_time[code]);
+                arm_pending_timer(tfd, pending_up, debounce_until);
             }
 
-        } else if (value == 2) { // Auto-repeat
-            emit(out_fd, EV_KEY, code, 2, &ev.time);
-            emit(out_fd, EV_SYN, SYN_REPORT, 0, &ev.time);
+            uint64_t time_since_press = (debounce_until[code] > 0)
+                ? (t_now + (uint64_t)timeout_ms - debounce_until[code])
+                : 0;
+            uint64_t time_since_last_event = (last_event_time[code] > 0)
+                ? (t_now - last_event_time[code])
+                : 0;
+            last_event_time[code] = t_now;
+
+            if (value == 1) { // Key down
+                if (t_now < debounce_until[code]) {
+                    // Second DOWN within debounce → treat as bounce, cancel any pending UP
+                    seen_second_down[code] = 1;
+                    if (pending_up[code]) {
+                        pending_up[code] = 0; // continuous press, drop pending UP
+                        printf("CANCEL PENDING UP due to second DOWN: %s (code %d)\n",
+                               key_names[code], code);
+                        fflush(stdout);
+                        arm_pending_timer(tfd, pending_up, debounce_until);
+                    }
+                    printf("Debounced DOWN: %s (code %d) at %" PRIu64 "ms after press, %" PRIu64 "ms since last event\n",
+                           key_names[code], code, time_since_press, time_since_last_event);
+                    fflush(stdout);
+                    continue;
+                }
+
+                // New press
+                debounce_until[code]   = t_now + (uint64_t)timeout_ms;
+                seen_second_down[code] = 0;
+                key_state[code]        = 1;
+
+                printf("PASS DOWN: %s (code %d) at %" PRIu64 "ms after press, %" PRIu64 "ms since last event\n",
+                       key_names[code], code, time_since_press, time_since_last_event);
+                fflush(stdout);
+
+                emit(out_fd, EV_KEY, code, 1, &ev.time);
+                emit(out_fd, EV_SYN, SYN_REPORT, 0, &ev.time);
+
+            } else if (value == 0) { // Key up
+                if (t_now < debounce_until[code]) {
+                    if (!seen_second_down[code]) {
+                        // Delay the UP until debounce expiry
+                        pending_up[code]     = 1;
+                        pending_up_time[code]= ev.time;
+
+                        uint64_t wait_ms = debounce_until[code] - t_now;
+                        printf("PENDING EARLY UP: %s (code %d) at %" PRIu64 "ms after press, %" PRIu64 "ms since last event, waiting %" PRIu64 "ms\n",
+                               key_names[code], code, time_since_press, time_since_last_event, wait_ms);
+                        fflush(stdout);
+
+                        arm_pending_timer(tfd, pending_up, debounce_until);
+                    } else {
+                        // In a bounce sequence → ignore UP
+                        printf("Debounced UP: %s (code %d) at %" PRIu64 "ms after press, %" PRIu64 "ms since last event\n",
+                               key_names[code], code, time_since_press, time_since_last_event);
+                        fflush(stdout);
+                    }
+                } else {
+                    // Normal UP after window
+                    key_state[code] = 0;
+                    printf("PASS UP: %s (code %d) at %" PRIu64 "ms after press, %" PRIu64 "ms since last event\n",
+                           key_names[code], code, time_since_press, time_since_last_event);
+                    fflush(stdout);
+
+                    emit(out_fd, EV_KEY, code, 0, &ev.time);
+                    emit(out_fd, EV_SYN, SYN_REPORT, 0, &ev.time);
+                }
+
+            } else if (value == 2) { // Auto-repeat
+                emit(out_fd, EV_KEY, code, 2, &ev.time);
+                emit(out_fd, EV_SYN, SYN_REPORT, 0, &ev.time);
+            }
         }
     }
 
     perror("Read failed or terminated");
 
+    // Cleanup
+    close(tfd);
     ioctl(out_fd, UI_DEV_DESTROY);
     close(out_fd);
     ioctl(in_fd, EVIOCGRAB, 0);
