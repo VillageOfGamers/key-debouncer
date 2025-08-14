@@ -65,7 +65,7 @@ const char *key_names[MAX_KEYCODE] = {
     [97]  = "KEY_RIGHTCTRL", [100] = "KEY_RIGHTALT",
     [125] = "KEY_LEFTMETA", [126] = "KEY_RIGHTMETA",
     [127] = "KEY_COMPOSE",
-
+    
     // Multimedia / special keys
     [113] = "KEY_MUTE", [114] = "KEY_VOLUMEDOWN", [115] = "KEY_VOLUMEUP",
     [163] = "KEY_NEXTSONG", [164] = "KEY_PLAYPAUSE", [165] = "KEY_STOPCD",
@@ -73,7 +73,6 @@ const char *key_names[MAX_KEYCODE] = {
     [140] = "KEY_CALC", [215] = "KEY_EMAIL", [172] = "KEY_HOMEPAGE",
     [217] = "KEY_SEARCH",
 };
-
 
 static uint64_t now_ms() {
     struct timespec ts;
@@ -110,15 +109,13 @@ int setup_uinput() {
     uidev.id.vendor = 0x1234;
     uidev.id.product = 0x5678;
     uidev.id.version = 1;
-
     (void)write(fd, &uidev, sizeof(uidev));
     ioctl(fd, UI_DEV_CREATE);
-
     return fd;
 }
 
 void print_help(const char *progname) {
-    fprintf(stderr,
+    fprintf(stdout,
         "Usage: %s <input-device-id> [timeout_ms]\n"
         "\n"
         "Arguments:\n"
@@ -132,7 +129,6 @@ void print_help(const char *progname) {
         progname, DEV_BASE, progname, progname, progname
     );
 }
-
 int main(int argc, char *argv[]) {
     if (argc == 1 || (argc > 1 && strcmp(argv[1], "--help") == 0)) {
         print_help(argv[0]);
@@ -177,19 +173,20 @@ int main(int argc, char *argv[]) {
 
     struct input_event ev;
     uint64_t debounce_until[MAX_KEYCODE] = {0};
-    uint8_t key_state[MAX_KEYCODE] = {0}; // 0 = up, 1 = down
-
+    uint8_t key_state[MAX_KEYCODE] = {0};
+    uint8_t seen_second_down[MAX_KEYCODE] = {0};
+    uint64_t last_event_time[MAX_KEYCODE] = {0};
     while (read(in_fd, &ev, sizeof(ev)) == sizeof(ev)) {
         if (ev.type != EV_KEY)
             continue;
 
         int code = ev.code;
-        int value = ev.value; // 0=up, 1=down, 2=autorepeat
+        int value = ev.value;
 
         if (code < 0 || code >= MAX_KEYCODE)
             continue;
 
-        // Allow volume knob events through unfiltered
+            // Allow volume knob events through unfiltered
         if (code == 113 || code == 114 || code == 115) {
             emit(out_fd, EV_KEY, code, value, &ev.time);
             emit(out_fd, EV_SYN, SYN_REPORT, 0, &ev.time);
@@ -197,24 +194,55 @@ int main(int argc, char *argv[]) {
         }
 
         uint64_t t_now = now_ms();
-
-        // Block events if still in debounce window
-        if (t_now < debounce_until[code]) {
-            printf("Debounced: %s (code %d) during active window\n",
-                   key_names[code], code);
-            fflush(stdout);
-            continue;
-        }
-
+        uint64_t time_since_press = (debounce_until[code] > 0)
+            ? (t_now + timeout_ms - debounce_until[code])
+            : 0;
+        uint64_t time_since_last_event = (last_event_time[code] > 0)
+            ? (t_now - last_event_time[code])
+            : 0;
+        last_event_time[code] = t_now;
         if (value == 1) { // Key down
+            if (t_now < debounce_until[code]) {
+                seen_second_down[code] = 1;
+                printf("Debounced DOWN: %s (code %d) at %lums after press, %lums since last event\n",
+                       key_names[code], code, time_since_press, time_since_last_event);
+                fflush(stdout);
+                continue;
+            }
+
             debounce_until[code] = t_now + timeout_ms; // Start debounce window
+            seen_second_down[code] = 0;
             key_state[code] = 1;
+            printf("PASS DOWN: %s (code %d) at %lums after press, %lums since last event\n",
+                   key_names[code], code, time_since_press, time_since_last_event);
+            fflush(stdout);
             emit(out_fd, EV_KEY, code, 1, &ev.time);
             emit(out_fd, EV_SYN, SYN_REPORT, 0, &ev.time);
         } else if (value == 0) { // Key up
-            key_state[code] = 0;
-            emit(out_fd, EV_KEY, code, 0, &ev.time);
-            emit(out_fd, EV_SYN, SYN_REPORT, 0, &ev.time);
+            if (t_now < debounce_until[code]) {
+                if (!seen_second_down[code]) {
+                    key_state[code] = 0;
+                    debounce_until[code] = 0;
+                    printf("PASS EARLY UP: %s (code %d) at %lums after press, %lums since last event\n",
+                           key_names[code], code, time_since_press, time_since_last_event);
+                    fflush(stdout);
+                    emit(out_fd, EV_KEY, code, 0, &ev.time);
+                    emit(out_fd, EV_SYN, SYN_REPORT, 0, &ev.time);
+                } else {
+                    printf("Debounced UP: %s (code %d) at %lums after press, %lums since last event\n",
+                           key_names[code], code, time_since_press, time_since_last_event);
+                    fflush(stdout);
+                }
+
+            } else {
+                key_state[code] = 0;
+                printf("PASS UP: %s (code %d) at %lums after press, %lums since last event\n",
+                       key_names[code], code, time_since_press, time_since_last_event);
+                fflush(stdout);
+                emit(out_fd, EV_KEY, code, 0, &ev.time);
+                emit(out_fd, EV_SYN, SYN_REPORT, 0, &ev.time);
+            }
+
         } else if (value == 2) { // Auto-repeat
             emit(out_fd, EV_KEY, code, 2, &ev.time);
             emit(out_fd, EV_SYN, SYN_REPORT, 0, &ev.time);
