@@ -5,6 +5,7 @@ OUTDIR = bin
 OUTBIN = $(OUTDIR)/$(TARGET)
 DEBUGSYM = $(OUTBIN).pdb
 SCRIPT = debounce.sh
+KBSCRIPT = list-keyboards.sh
 SERVICE = debounce.service
 
 PREFIX ?= /usr/local
@@ -39,6 +40,7 @@ $(OUTBIN): $(SRC)
 install: all
 	install -Dm755 $(OUTBIN) $(DESTDIR)$(BINDIR)/$(TARGET)
 	install -Dm755 $(SCRIPT) $(DESTDIR)$(BINDIR)/$(SCRIPT)
+	install -Dm755 $(KBSCRIPT) $(DESTDIR)$(BINDIR)/$(KBSCRIPT)
 	install -Dm644 $(SERVICE) $(DESTDIR)$(SYSTEMD_UNITDIR)/$(SERVICE)
 
 clean:
