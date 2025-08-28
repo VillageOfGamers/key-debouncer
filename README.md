@@ -1,7 +1,7 @@
 # Key Debouncer
 
 ## About
-This is a quick and simple per-key keyboard input de-bouncer specifically designed to debounce any standard English-US keyboard, with or without the number pad and/or media keys. It can be repurposed for other layouts as needed by adjusting which keys are tied to which codes (the list is currently hardcoded for `en-US` layout, non-Dvorak).
+This is a quick and simple per-key keyboard input debouncer specifically designed to debounce any standard English-US keyboard, with or without the number pad and/or media keys. It can be repurposed for other layouts as needed by adjusting which keys are tied to which codes (the list is currently hardcoded for `en-US` layout, non-Dvorak).
 
 ## Contributing
 If you would like to contribute to this project, please fork this repo, make your changes, and submit a pull request! All are welcome to do so, though it will still be up to me on which ones get added/implemented.
@@ -15,14 +15,14 @@ If you would like to contribute to this project, please fork this repo, make you
 
 4. Simply run `sudo make install` and it'll build the executable, then proceed to install it and the wrapper script to `/usr/local/bin`, and the SystemD unit file to `/etc/systemd/system` (default Ubuntu locations for non-APT-managed programs).
 
-5. If the keyboard still acts bouncy (double inputs still occur), try increasing the timeout slightly. I recommend increasing the timeout in 5ms steps. Repeat until you can comfortably say that it won't bounce under normal usage. I use 15ms myself and it's the default for the project as well. If you find that it works and doesn't hinder your own usage, you probably should keep it.
+5. If the keyboard still acts bouncy (double inputs still occur), try increasing the timeout slightly. Repeat until you can comfortably say that it won't bounce under normal usage. I use 33ms myself and it's the default for the project as well. If you find that it works and doesn't hinder your own usage, you probably should keep it.
 
 ## Reporting Issues
 If you run into problems with this project, have a terminal open in the project folder and follow these steps:
 
 1. Rebuild the program using `make MODE=dev`. It'll generate the binary as `debounce` in the `dist/` folder along with the `debounce.pdb` file for actually debugging it.
 
-2. Run `./debounce <kbname> <timeout>` replacing `<symlink>` with your keyboard's real symlink under `/dev/input/by-id` and `<timeout>` with a number in milliseconds (1 is 1ms, 10 is 10ms). Preferably, attach a debugger to the process (like `gdb` or simiilar) to see what it's doing internally.
+2. Run `./debounce <symlink> <timeout>` replacing `<symlink>` with your keyboard's real symlink (under either `/dev/input/by-id` or `/dev/input/by-path`), and `<timeout>` with a number in milliseconds (1 is 1ms, 10 is 10ms). Preferably, attach a debugger to the process (like `gdb` or simiilar) to see what it's doing internally.
 
     * If the program works with `make MODE=dev`, but not with just `make`, it's a compiler optimization problem. In this case:
 
@@ -43,4 +43,4 @@ If you run into problems with this project, have a terminal open in the project 
 3. Now that you've determined what you need, create an issue on GitHub, and provide the info requested based on your circumstances. Please also tell me what Linux distribution, desktop environment (like GNOME, KDE, Xfce, etc.), and render backend (X11 or Wayland) you're using. For reference, I made this and use it daily on Linux Mint 22.1 Cinnamon Edition, under X11.
 
 ## Other OS Support
-I do not plan to support Windows or MacOS with this at all; Windows generally has working debounce utilities, and MacOS is not an OS I have reasonable access to at this time. Please do not ask for these; it's just not going to happen. This tool is, by design, Linux-only. Not even Android or iOS will be supported. Also, I apologize in advance if BSD or other Unix-like OSes have issues; I have no way to test them.
+I do not plan to support Windows or MacOS with this at all; Windows generally has good, working debounce utilities, and MacOS is not an OS I have reasonable access to at this time. Please do not ask for these; it's just not going to happen. This tool is, by design, Linux-only. Not even Android or iOS will be supported due to system limitations (root access required to hijack input HALs). Also, I apologize in advance if BSD or other Unix-like OSes have issues; I have no way to test them as my daily driver is an Ubuntu-based Linux distribution.
