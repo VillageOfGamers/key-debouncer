@@ -11,7 +11,7 @@ If you would like to contribute to this project, please fork this repo, make you
 
 2. Run `./list-keyboards.sh` to list off your current keyboards. It'll list their friendly name and symlink under `/dev/input/by-id/`.
 
-3. Provide the symlink name to the script `debounce.sh`, along with a preferred timeout in milliseconds (15ms is a good default). The sample script points to a Corsair K70 Core RGB keyboard (mine has lots of bouncy keys and is why this project was made).
+3. Provide the symlink name to the script `debounce.sh`, along with a preferred timeout in milliseconds (33ms is a good default). The sample script points to a Corsair K70 Core RGB keyboard (mine has lots of very bouncy keys and is why this project was made).
 
 4. Simply run `sudo make install` and it'll build the executable, then proceed to install it and the wrapper script to `/usr/local/bin`, and the SystemD unit file to `/etc/systemd/system` (default Ubuntu locations for non-APT-managed programs).
 
@@ -32,7 +32,7 @@ If you run into problems with this project, have a terminal open in the project 
 
     * If it's not working using `make MODE=dev` either, then:
 
-        * Save the FULL output from the command from step 2, along with which version you're using, the keyboard you're trying to use and its symlink path in `/dev/input/by-id` from the `list-keyboards.sh` script provided.
+        * Save the FULL output from the command from step 2, along with which version you're using, the keyboard you're trying to use and its device path in `/dev/input/` from the `list-keyboards.sh` script provided.
 
         * If your keyboard is NOT appearing using that script, or you don't know which one it is due to the name not populating, the symlink name should reveal what keyboard it's pointing at.
 

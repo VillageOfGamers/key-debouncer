@@ -1,46 +1,37 @@
-#!/bin/sh
+#!/bin/bash
 
-INPUT_DIR="/dev/input/by-id"
+INPUT_ROOT="/dev/input"
 
-if [ ! -d "$INPUT_DIR" ]; then
-    echo "No such directory: $INPUT_DIR"
-    exit 1
-fi
+echo "Available keyboards (paths relative to /dev/input):"
+echo "--------------------------------------------------------------------------------"
 
-echo "Detected keyboard input devices:"
-echo
+for ev in "$INPUT_ROOT"/event*; do
+    [[ ! -e "$ev" ]] && continue  # skip if no event devices
 
-found=0
-for symlink in "$INPUT_DIR"/*-event-kbd; do
-    [ -e "$symlink" ] || continue
+    # Find symlinks in by-id and by-path
+    byid=$(find "$INPUT_ROOT"/by-id -lname "*$(basename "$ev")" 2>/dev/null)
+    bypath=$(find "$INPUT_ROOT"/by-path -lname "*$(basename "$ev")" 2>/dev/null)
 
-    realdev=$(readlink -f "$symlink")
+    # Skip devices with no symlinks
+    [[ -z $byid && -z $bypath ]] && continue
 
-    # Try udevadm for device name
-    name=$(udevadm info -q property -n "$realdev" 2>/dev/null | \
-        grep '^NAME=' | cut -d= -f2- | tr -d '"')
+    # Bus, vendor, product (may be empty for virtual devices)
+    bustype=$(udevadm info --query=property --name="$ev" | awk -F= '/ID_BUS/ {print $2}')
+    vendor=$(udevadm info --query=property --name="$ev" | awk -F= '/ID_VENDOR_ID/ {print $2}')
+    product=$(udevadm info --query=property --name="$ev" | awk -F= '/ID_MODEL_ID/ {print $2}')
 
-    # Fallback to sysfs if udevadm fails
-    if [ -z "$name" ]; then
-        sysname="/sys/class/input/$(basename "$realdev")/device/name"
-        if [ -r "$sysname" ]; then
-            name=$(cat "$sysname")
-        fi
-    fi
+    # Print info
+    echo "Device: $(basename "$ev")"
+    # Print relative symlink paths under a single label "symlink"
+    for link in $byid $bypath; do
+        [[ -n $link ]] || continue
+        rel="${link#$INPUT_ROOT/}"  # remove /dev/input/ from start
+        echo "  Symlink: $rel"
+    done
+    
+    [[ $bustype ]] && echo "  Bus    : $bustype"
+    [[ $vendor ]]  && echo "  Vendor : $vendor"
+    [[ $product ]] && echo "  Product: $product"
 
-    # Final fallback: use symlink basename
-    if [ -z "$name" ]; then
-        name="[unnamed] (basename: $(basename "$symlink"))"
-    fi
-
-    echo "Device:     $name"
-    echo "Symlink:    $symlink"
-    echo "Resolved:   $realdev"
     echo
-    found=1
 done
-
-if [ "$found" -eq 0 ]; then
-    echo "No keyboards found via $INPUT_DIR/*-event-kbd"
-    exit 1
-fi
