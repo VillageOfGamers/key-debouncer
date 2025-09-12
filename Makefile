@@ -1,49 +1,50 @@
 # Config
-SRC = debounce.c
-TARGET = debounce
+SRC_DAEMON = debounced.c
+SRC_CTL    = debouncectl.c
+TARGET_DAEMON = debounced
+TARGET_CTL    = debouncectl
 OUTDIR = bin
-OUTBIN = $(OUTDIR)/$(TARGET)
-DEBUGSYM = $(OUTBIN).pdb
-SCRIPT = debounce.sh
-KBSCRIPT = list-keyboards.sh
-SERVICE = debounce.service
+OUTBIN_DAEMON = $(OUTDIR)/$(TARGET_DAEMON)
+OUTBIN_CTL    = $(OUTDIR)/$(TARGET_CTL)
+
+DEBUGSYM_DAEMON = $(OUTBIN_DAEMON).pdb
+DEBUGSYM_CTL    = $(OUTBIN_CTL).pdb
 
 PREFIX ?= /usr/local
 BINDIR = $(PREFIX)/bin
 SYSTEMD_UNITDIR = /etc/systemd/system
+SERVICE = debounced.service
 
 MODE ?= release
 CC = gcc
 CFLAGS_COMMON = -Wall -Wextra -std=gnu99
 
 ifeq ($(MODE),release)
-    CFLAGS += $(CFLAGS_COMMON) -O3 -march=native
-    LDFLAGS += -s
+    CFLAGS = $(CFLAGS_COMMON) -O2 -march=native
+    LDFLAGS = -s
 else ifeq ($(MODE),dev)
-    CFLAGS += $(CFLAGS_COMMON) -O0 -g
+    CFLAGS = $(CFLAGS_COMMON) -O0 -g
 else
     $(error Unknown MODE '$(MODE)'; use 'release' or 'dev')
 endif
 
 # Targets
-all: $(OUTBIN)
-ifeq ($(MODE),dev)
-	@echo "Extracting debug symbols to $(DEBUGSYM)"
-	objcopy --only-keep-debug $(OUTBIN) $(DEBUGSYM)
-	objcopy --strip-debug --add-gnu-debuglink=$(DEBUGSYM) $(OUTBIN)
-endif
+all: $(OUTBIN_DAEMON) $(OUTBIN_CTL)
 
-$(OUTBIN): $(SRC)
+$(OUTBIN_DAEMON): $(SRC_DAEMON)
 	mkdir -p $(OUTDIR)
 	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS)
 
+$(OUTBIN_CTL): $(SRC_CTL)
+	mkdir -p $(OUTDIR)
+	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS) -lncurses
+
 install: all
-	install -Dm755 $(OUTBIN) $(DESTDIR)$(BINDIR)/$(TARGET)
-	install -Dm755 $(SCRIPT) $(DESTDIR)$(BINDIR)/$(SCRIPT)
-	install -Dm755 $(KBSCRIPT) $(DESTDIR)$(BINDIR)/$(KBSCRIPT)
+	install -Dm755 $(OUTBIN_DAEMON) $(DESTDIR)$(BINDIR)/$(TARGET_DAEMON)
+	install -Dm755 $(OUTBIN_CTL) $(DESTDIR)$(BINDIR)/$(TARGET_CTL)
 	install -Dm644 $(SERVICE) $(DESTDIR)$(SYSTEMD_UNITDIR)/$(SERVICE)
 
 clean:
-	$(RM) $(OUTDIR)
+	$(RM) -r $(OUTDIR)
 
 .PHONY: all clean install
