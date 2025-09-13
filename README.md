@@ -15,7 +15,7 @@ If you would like to contribute to this project, please fork this repo, make you
 
 4. Logout then log back in; you'll now be part of the `input` group on your system. This is required to be able to see nodes inside `/dev/input` without `sudo`.
 
-5. Once that's done, run `sudo systemctl daemon-reload` followed by `sudo systemctl start debounced` to start the actual background process that handles the keyboard filtering.
+5. Once that's done, run `sudo systemctl daemon-reload` followed by `sudo systemctl enable --now debounced` to start the actual background process that handles the keyboard filtering.
 
 6. Last but not least, run `debouncectl --help`, read it for instructions on how to use it properly, and test your keyboard afterwards! If it's still bouncing, re-run `debouncectl` with a higher timeout value, and try again.
 
