@@ -13,7 +13,7 @@
 #include <linux/input.h>
 #include <libgen.h>
 
-#define SOCKET_PATH "/run/debounced/debounced.sock"
+#define SOCKET_PATH "/run/debounced.sock"
 #define MAX_DEVICES 64
 
 typedef struct {
@@ -32,7 +32,7 @@ static void print_usage(const char *prog) {
     printf("  show: lists usable keyboards\n");
     printf("  start: starts the daemon with given arguments\n");
     printf("  device: path to keyboard event node to start with\n");
-    printf("  timeout_ms: 1-1000 ms [default: 50]\n");
+    printf("  timeout_ms: 1-100 ms [default: 50]\n");
     printf("  mode: b (both), d (debounce only), f (FlashTap only) [default: d]\n");
     printf("  FTpair: ad, arrows, both, none [default: none for d, ad for f/b]\n");
 }

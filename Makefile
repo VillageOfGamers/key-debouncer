@@ -43,6 +43,9 @@ install: all
 	install -Dm755 $(OUTBIN_DAEMON) $(DESTDIR)$(BINDIR)/$(TARGET_DAEMON)
 	install -Dm755 $(OUTBIN_CTL) $(DESTDIR)$(BINDIR)/$(TARGET_CTL)
 	install -Dm644 $(SERVICE) $(DESTDIR)$(SYSTEMD_UNITDIR)/$(SERVICE)
+	@echo "Adding $(SUDO_USER) to input group..."
+	@usermod -aG input $(SUDO_USER)
+	@echo "You may need to log out and back in for group changes to take effect."
 
 clean:
 	$(RM) -r $(OUTDIR)
