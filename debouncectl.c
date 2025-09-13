@@ -13,6 +13,12 @@
 #include <linux/input.h>
 #include <libgen.h>
 
+#define STATUS_RUNNING      0x80
+#define STATUS_DEBOUNCE     0x08
+#define STATUS_FLASHTAP     0x04
+#define STATUS_PAIR_AD      0x02
+#define STATUS_PAIR_ARROWS  0x01
+
 #define SOCKET_PATH "/run/debounced.sock"
 #define MAX_DEVICES 64
 
@@ -26,10 +32,69 @@ typedef struct {
     char serial[256];
 } device_info;
 
+static int show_status(void) {
+    int sock = socket(AF_UNIX, SOCK_STREAM, 0);
+    if(sock < 0) { perror("socket"); return -1; }
+
+    struct sockaddr_un addr = {0};
+    addr.sun_family = AF_UNIX;
+    strncpy(addr.sun_path, SOCKET_PATH, sizeof(addr.sun_path)-1);
+
+    struct timeval tv = {1,0}; // 1s timeout
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+    if(connect(sock,(struct sockaddr*)&addr,sizeof(addr))<0){
+        perror("connect"); close(sock); return -1;
+    }
+
+    // Send STATUS command
+    if(write(sock,"STATUS",6) != 6) { perror("write"); close(sock); return -1; }
+
+    uint8_t buf[2] = {0};
+    ssize_t r = read(sock, buf, 2);
+    close(sock);
+
+    if(r != 2) {
+        fprintf(stderr,"Failed to read status from daemon\n");
+        return -1;
+    }
+
+    uint8_t status_byte = buf[0];
+    uint8_t timeout = buf[1];
+
+    char running = (status_byte & STATUS_RUNNING) ? 'Y' : 'N';
+
+    printf("Debounce daemon status report\n");
+    printf("Running: %c\n", running);
+
+    if(running == 'Y') {
+        char mode_str[16] = "";
+        char ft_str[16] = "";
+
+        if((status_byte & STATUS_DEBOUNCE) && (status_byte & STATUS_FLASHTAP)) strcpy(mode_str,"DB+FT");
+        else if(status_byte & STATUS_DEBOUNCE) strcpy(mode_str,"DB");
+        else if(status_byte & STATUS_FLASHTAP) strcpy(mode_str,"FT");
+
+        if(status_byte & STATUS_FLASHTAP) {
+            if((status_byte & STATUS_PAIR_AD) && (status_byte & STATUS_PAIR_ARROWS)) strcpy(ft_str,"Both");
+            else if(status_byte & STATUS_PAIR_AD) strcpy(ft_str,"AD");
+            else if(status_byte & STATUS_PAIR_ARROWS) strcpy(ft_str,"Arrows");
+        }
+
+        printf("Mode: %s\n", mode_str);
+        if(status_byte & STATUS_FLASHTAP) printf("FT Pairs: %s\n", ft_str);
+        if(status_byte & STATUS_DEBOUNCE) printf("Timeout: %dms\n", timeout);
+    }
+
+    return 0;
+}
+
 static void print_usage(const char *prog) {
-    printf("Usage: %s stop || show || start <device> [timeout_ms] [mode] [FTpair]\n", prog);
+    printf("Usage: %s stop || show || status || start <device> [timeout_ms] [mode] [FTpair]\n", prog);
     printf("  stop: stops the daemon\n");
     printf("  show: lists usable keyboards\n");
+    printf("  status: shows current status of the daemon\n");
     printf("  start: starts the daemon with given arguments\n");
     printf("  device: path to keyboard event node to start with\n");
     printf("  timeout_ms: 1-100 ms [default: 50]\n");
@@ -171,10 +236,11 @@ int main(int argc, char *argv[]) {
     char ftpair[16] = "none";
     char device[PATH_MAX] = {0};
 
-    if(strcmp(argv[1],"stop")==0 || strcmp(argv[1],"show")==0) {
+    if(strcmp(argv[1],"stop")==0 || strcmp(argv[1],"show")==0 || strcmp(argv[1],"status")==0) {
         if(argc!=2) { fprintf(stderr,"[%s] does not take extra arguments\n",argv[1]); print_usage(argv[0]); return 1; }
         if(strcmp(argv[1],"stop")==0) return send_cmd("STOP");
         if(strcmp(argv[1],"show")==0) return show_devices();
+        if(strcmp(argv[1],"status")==0) return show_status();
     } else if(strcmp(argv[1],"start")==0) {
         if(argc<3 || argc>6) { fprintf(stderr,"'start' requires 1-4 additional args\n"); print_usage(argv[0]); return 1; }
         dev_idx = 2;
