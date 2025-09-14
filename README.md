@@ -1,7 +1,7 @@
 # Key Debouncer
 
 ## About
-This is a quick and simple per-key keyboard input debouncer specifically designed to debounce any standard English-US keyboard, with or without the number pad and/or media keys. It can be repurposed for other layouts as needed by adjusting which keys are tied to which codes (the list is currently hardcoded for `en-US` layout, non-Dvorak).
+This is a quick and simple per-key keyboard input debouncer specifically designed to debounce any standard keyboard, regardless of input language; key name translations are provided by `libevdev` for user-friendly logs.
 
 ## Contributing
 If you would like to contribute to this project, please fork this repo, make your changes, and submit a pull request! All are welcome to do so, though it will still be up to me on which ones get added/implemented.
