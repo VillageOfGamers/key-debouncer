@@ -222,13 +222,23 @@ static int send_cmd(const char *cmd) {
     setsockopt(sock,SOL_SOCKET,SO_SNDTIMEO,&tv,sizeof(tv));
     setsockopt(sock,SOL_SOCKET,SO_RCVTIMEO,&tv,sizeof(tv));
     if(connect(sock,(struct sockaddr*)&addr,sizeof(addr))<0){ perror("connect"); close(sock); return -1; }
-    write(sock,cmd,strlen(cmd));
+    if(write(sock,cmd,strlen(cmd)) != (ssize_t)strlen(cmd)){ perror("write"); close(sock); return 1; }
+    uint8_t status_code = 1;
+    read(sock, &status_code, 1);
     close(sock);
-    return 0;
+    if(status_code==1) {
+        if(strcmp(cmd,"stop")==0) {
+            fprintf(stderr, "Daemon is already idle; stop command was ignored.");
+        }
+        if(strcmp(cmd,"start")==0) {
+            fprintf(stderr, "Daemon is already running; start command was ignored.");
+        }
+    }
+    return status_code;
 }
 
 int main(int argc, char *argv[]) {
-    if(argc<2){ print_usage(argv[0]); return 1; }
+    if(argc<2){ print_usage(argv[0]); return 0; }
 
     int dev_idx = 1; // default device arg position
     int timeout = 50;
