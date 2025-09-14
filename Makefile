@@ -33,7 +33,7 @@ all: $(OUTBIN_DAEMON) $(OUTBIN_CTL)
 
 $(OUTBIN_DAEMON): $(SRC_DAEMON)
 	mkdir -p $(OUTDIR)
-	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS)
+	$(CC) $(CFLAGS) -I/usr/include/libevdev-1.0 $< -o $@ $(LDFLAGS) -levdev
 
 $(OUTBIN_CTL): $(SRC_CTL)
 	mkdir -p $(OUTDIR)

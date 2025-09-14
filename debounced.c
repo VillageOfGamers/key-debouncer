@@ -18,20 +18,23 @@
 #include <signal.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/timerfd.h>
+#include <libevdev/libevdev.h>
 
+// ---------- Status ----------
 typedef struct {
-    uint8_t status_byte; // running + mode + FT pairs
-    uint8_t timeout_ms;  // only meaningful if debounce mode is set
+    uint8_t status_byte;
+    uint8_t timeout_ms;
 } status_t;
 
 static status_t g_status = {0};
 
 // Bit masks
-#define STATUS_RUNNING      0x80 // bit 7
-#define STATUS_DEBOUNCE     0x08 // bit 3
-#define STATUS_FLASHTAP     0x04 // bit 2
-#define STATUS_PAIR_AD      0x02 // bit 1
-#define STATUS_PAIR_ARROWS  0x01 // bit 0
+#define STATUS_RUNNING      0x80
+#define STATUS_DEBOUNCE     0x08
+#define STATUS_FLASHTAP     0x04
+#define STATUS_PAIR_AD      0x02
+#define STATUS_PAIR_ARROWS  0x01
 
 #define MAX_KEYCODE 256
 #define CONTROL_SOCKET_PATH "/run/debounced.sock"
@@ -40,9 +43,8 @@ static status_t g_status = {0};
 // ---------- Globals ----------
 typedef struct {
     int pressed;
-    int up_pending;
     uint64_t down_time;
-    struct timeval up_time;
+    int timerfd;        // -1 if inactive
 } KeyState;
 
 static KeyState keys[MAX_KEYCODE];
@@ -54,199 +56,20 @@ static char mode = 'd';
 static int ft_ad_enabled = 0, ft_arrows_enabled = 0;
 static int ft_active = -1;
 
-// ---------- FlashTap pair state ----------
+// ---------- FlashTap ----------
 typedef struct {
     int key1, key2;
+    int phys[2];
 } FlashPair;
 
-static FlashPair pair_ad = {30, 32};    // A/D
-static FlashPair pair_ar = {105,106};   // Left/Right
+static FlashPair pair_ad = {30, 32, {0,0}};      // A/D
+static FlashPair pair_ar = {105,106, {0,0}};     // Left/Right
 
 // ---------- Key map ----------
-static const char *key_names[MAX_KEYCODE] = {
-    [0] = "KEY_RESERVED",
-    [1] = "KEY_ESC",
-    [2] = "KEY_1",
-    [3] = "KEY_2",
-    [4] = "KEY_3",
-    [5] = "KEY_4",
-    [6] = "KEY_5",
-    [7] = "KEY_6",
-    [8] = "KEY_7",
-    [9] = "KEY_8",
-    [10] = "KEY_9",
-    [11] = "KEY_0",
-    [12] = "KEY_MINUS",
-    [13] = "KEY_EQUAL",
-    [14] = "KEY_BACKSPACE",
-    [15] = "KEY_TAB",
-    [16] = "KEY_Q",
-    [17] = "KEY_W",
-    [18] = "KEY_E",
-    [19] = "KEY_R",
-    [20] = "KEY_T",
-    [21] = "KEY_Y",
-    [22] = "KEY_U",
-    [23] = "KEY_I",
-    [24] = "KEY_O",
-    [25] = "KEY_P",
-    [26] = "KEY_LEFTBRACE",
-    [27] = "KEY_RIGHTBRACE",
-    [28] = "KEY_ENTER",
-    [29] = "KEY_LEFTCTRL",
-    [30] = "KEY_A",
-    [31] = "KEY_S",
-    [32] = "KEY_D",
-    [33] = "KEY_F",
-    [34] = "KEY_G",
-    [35] = "KEY_H",
-    [36] = "KEY_J",
-    [37] = "KEY_K",
-    [38] = "KEY_L",
-    [39] = "KEY_SEMICOLON",
-    [40] = "KEY_APOSTROPHE",
-    [41] = "KEY_GRAVE",
-    [42] = "KEY_LEFTSHIFT",
-    [43] = "KEY_BACKSLASH",
-    [44] = "KEY_Z",
-    [45] = "KEY_X",
-    [46] = "KEY_C",
-    [47] = "KEY_V",
-    [48] = "KEY_B",
-    [49] = "KEY_N",
-    [50] = "KEY_M",
-    [51] = "KEY_COMMA",
-    [52] = "KEY_DOT",
-    [53] = "KEY_SLASH",
-    [54] = "KEY_RIGHTSHIFT",
-    [55] = "KEY_KPASTERISK",
-    [56] = "KEY_LEFTALT",
-    [57] = "KEY_SPACE",
-    [58] = "KEY_CAPSLOCK",
-    [59] = "KEY_F1",
-    [60] = "KEY_F2",
-    [61] = "KEY_F3",
-    [62] = "KEY_F4",
-    [63] = "KEY_F5",
-    [64] = "KEY_F6",
-    [65] = "KEY_F7",
-    [66] = "KEY_F8",
-    [67] = "KEY_F9",
-    [68] = "KEY_F10",
-    [69] = "KEY_NUMLOCK",
-    [70] = "KEY_SCROLLLOCK",
-    [71] = "KEY_KP7",
-    [72] = "KEY_KP8",
-    [73] = "KEY_KP9",
-    [74] = "KEY_KPMINUS",
-    [75] = "KEY_KP4",
-    [76] = "KEY_KP5",
-    [77] = "KEY_KP6",
-    [78] = "KEY_KPPLUS",
-    [79] = "KEY_KP1",
-    [80] = "KEY_KP2",
-    [81] = "KEY_KP3",
-    [82] = "KEY_KP0",
-    [83] = "KEY_KPDOT",
-    [84] = "KEY_ZENKAKUHANKAKU",
-    [85] = "KEY_102ND",
-    [86] = "KEY_F11",
-    [87] = "KEY_F12",
-    [88] = "KEY_RO",
-    [89] = "KEY_KATAKANA",
-    [90] = "KEY_HIRAGANA",
-    [91] = "KEY_HENKAN",
-    [92] = "KEY_KATAKANAHIRAGANA",
-    [93] = "KEY_MUHENKAN",
-    [94] = "KEY_KPJPCOMMA",
-    [95] = "KEY_KPENTER",
-    [96] = "KEY_RIGHTCTRL",
-    [97] = "KEY_KPSLASH",
-    [98] = "KEY_SYSRQ",
-    [99] = "KEY_RIGHTALT",
-    [100] = "KEY_LINEFEED",
-    [101] = "KEY_HOME",
-    [102] = "KEY_UP",
-    [103] = "KEY_PAGEUP",
-    [104] = "KEY_LEFT",
-    [105] = "KEY_RIGHT",
-    [106] = "KEY_END",
-    [107] = "KEY_DOWN",
-    [108] = "KEY_PAGEDOWN",
-    [109] = "KEY_INSERT",
-    [110] = "KEY_DELETE",
-    [111] = "KEY_MACRO",
-    [112] = "KEY_MUTE",
-    [113] = "KEY_VOLUMEDOWN",
-    [114] = "KEY_VOLUMEUP",
-    [115] = "KEY_POWER",
-    [116] = "KEY_KPEQUAL",
-    [117] = "KEY_KPPLUSMINUS",
-    [118] = "KEY_PAUSE",
-    [119] = "KEY_SCALE",
-    [120] = "KEY_KPCOMMA",
-    [121] = "KEY_HANGEUL",
-    [122] = "KEY_HANJA",
-    [123] = "KEY_YEN",
-    [124] = "KEY_LEFTMETA",
-    [125] = "KEY_RIGHTMETA",
-    [126] = "KEY_COMPOSE",
-    [127] = "KEY_STOP",
-    [128] = "KEY_AGAIN",
-    [129] = "KEY_PROPS",
-    [130] = "KEY_UNDO",
-    [131] = "KEY_FRONT",
-    [132] = "KEY_COPY",
-    [133] = "KEY_OPEN",
-    [134] = "KEY_PASTE",
-    [135] = "KEY_FIND",
-    [136] = "KEY_CUT",
-    [137] = "KEY_HELP",
-    [138] = "KEY_MENU",
-    [139] = "KEY_CALC",
-    [140] = "KEY_SETUP",
-    [141] = "KEY_SLEEP",
-    [142] = "KEY_WAKEUP",
-    [143] = "KEY_FILE",
-    [144] = "KEY_SENDFILE",
-    [145] = "KEY_DELETEFILE",
-    [146] = "KEY_XFER",
-    [147] = "KEY_PROG1",
-    [148] = "KEY_PROG2",
-    [149] = "KEY_WWW",
-    [150] = "KEY_MSDOS",
-    [151] = "KEY_COFFEE",
-    [152] = "KEY_ROTATE_DISPLAY",
-    [153] = "KEY_DIRECTION",
-    [154] = "KEY_CYCLEWINDOWS",
-    [155] = "KEY_MAIL",
-    [156] = "KEY_BOOKMARKS",
-    [157] = "KEY_COMPUTER",
-    [158] = "KEY_BACK",
-    [159] = "KEY_FORWARD",
-    [160] = "KEY_CLOSECD",
-    [161] = "KEY_EJECTCD",
-    [162] = "KEY_EJECTCLOSECD",
-    [163] = "KEY_NEXTSONG",
-    [164] = "KEY_PLAYPAUSE",
-    [165] = "KEY_PREVIOUSSONG",
-    [166] = "KEY_STOPCD",
-    [167] = "KEY_RECORD",
-    [168] = "KEY_REWIND",
-    [169] = "KEY_PHONE",
-    [170] = "KEY_ISO",
-    [171] = "KEY_CONFIG",
-    [172] = "KEY_HOMEPAGE",
-    [173] = "KEY_REFRESH",
-    [174] = "KEY_EXIT",
-    [175] = "KEY_MOVE",
-    [176] = "KEY_EDIT",
-    [177] = "KEY_SCROLLUP",
-    [178] = "KEY_SCROLLDOWN",
-    [179] = "KEY_KPLEFTPAREN",
-    [180] = "KEY_KPRIGHTPAREN",
-    [181 ... 255] = "UNKNOWN_KEY"
-};
+static const char *key_name(int code) {
+    const char *n = libevdev_event_code_get_name(EV_KEY, code);
+    return n ? n : "UNKNOWN";
+}
 
 // ---------- Helpers ----------
 static uint64_t now_ms(void) {
@@ -300,94 +123,92 @@ static void handle_flashtap(int code, int value) {
 
     int idx = (code == fp->key1) ? 0 : 1;
     int other = (idx==0)?fp->key2:fp->key1;
-    static int phys[2] = {0,0};
-    phys[idx] = (value!=0);
+    fp->phys[idx] = (value!=0);
 
     if(value==1) { // down
         if(ft_active==other) {
             emit_key(fd_out, other, 0, NULL);
-            printf("[FT] Released %s due to %s press\n", key_names[other], key_names[code]);
+            printf("[FT] Released %s due to %s press\n", key_name(other), key_name(code));
         }
         ft_active = code;
         emit_key(fd_out, code, 1, NULL);
-        fprintf(stderr,"[FT] %s DOWN\n", key_names[code]);
+        fprintf(stderr,"[FT] %s DOWN\n", key_name(code));
     } else if(value==0) { // up
         if(ft_active==code) {
             ft_active=-1;
             emit_key(fd_out, code, 0, NULL);
-            printf("[FT] %s UP\n", key_names[code]);
-            if(phys[1-idx]) {
+            printf("[FT] %s UP\n", key_name(code));
+            if(fp->phys[1-idx]) {
                 ft_active = other;
                 emit_key(fd_out, other, 1, NULL);
-                printf("[FT] %s state restored due to %s release\n", key_names[other], key_names[code]);
+                printf("[FT] %s state restored due to %s release\n", key_name(other), key_name(code));
             }
         }
     }
 }
 
-// ---------- Debounce ----------
-static void process_debounce(int fd_in, int code, int value) {
-    if(value==2) { // repeat
-        emit_key(fd_out, code, 2, NULL);
-        return;
+// ---------- Debounce with timerfd ----------
+static void start_debounce_timer(int code, uint64_t delay_ms) {
+    if(keys[code].timerfd >= 0) {
+        close(keys[code].timerfd);
+        keys[code].timerfd = -1;
     }
 
+    int tfd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK|TFD_CLOEXEC);
+    if(tfd < 0) {
+        perror("timerfd_create");
+        return;
+    }
+    struct itimerspec its = {0};
+    its.it_value.tv_sec  = delay_ms / 1000;
+    its.it_value.tv_nsec = (delay_ms % 1000) * 1000000ULL;
+    if(timerfd_settime(tfd, 0, &its, NULL) < 0) {
+        perror("timerfd_settime");
+        close(tfd);
+        return;
+    }
+    keys[code].timerfd = tfd;
+}
+
+static void process_debounce(int code, int value, const struct timeval *tv) {
     uint64_t now = now_ms();
 
-    if(value==1) { // down
-        if(!keys[code].pressed) {
-            emit_key(fd_out, code, 1, NULL);
+    if (value == 1) { // down
+        if (!keys[code].pressed) {
+            emit_key(fd_out, code, 1, tv);
             keys[code].pressed = 1;
             keys[code].down_time = now;
-        } else if(keys[code].up_pending) {
-            printf("[DB] %s cancel up, new down %ums before timer expiry\n",
-                    key_names[code], (uint8_t)(now - keys[code].down_time));
-            keys[code].up_pending = 0;
+        } else if (keys[code].timerfd >= 0) {
+            // cancel pending release
+            fprintf(stderr, "[DB] %s cancel pending up\n", key_name(code));
+            close(keys[code].timerfd);
+            keys[code].timerfd = -1;
         }
-    } else if(value==0) { // up
-        uint8_t elapsed = (uint8_t)(now - keys[code].down_time);
-        if(elapsed<debounce_ms) {
-            keys[code].up_pending = 1;
-            gettimeofday(&keys[code].up_time,NULL);
-            uint8_t remaining = debounce_ms - elapsed;
-
-            printf("[DB] %s pending up, %ums since press, waiting %ums\n",
-                    key_names[code], elapsed, remaining);
-
-            struct pollfd pfd = { .fd = fd_in, .events = POLLIN };
-            while(remaining--) {
-                int ret = poll(&pfd, 1, 1);
-                if(ret>0 && (pfd.revents & POLLIN)) {
-                    struct input_event ev;
-                    ssize_t r = read(fd_in,&ev,sizeof(ev));
-                    if(r==sizeof(ev) && ev.type==EV_KEY && ev.code==code) {
-                        if(ev.value==1) {
-                            printf("[DB] %s cancel up due to new down\n", key_names[code]);
-                            keys[code].up_pending = 0;
-                            return;
-                        } else if(ev.value==2) {
-                            emit_key(fd_out, code, 2, &ev.time);
-                        }
-                    }
-                }
-                usleep(1000);
-            }
-
-            emit_key(fd_out, code, 0, &keys[code].up_time);
-            keys[code].up_pending = 0;
-            keys[code].pressed = 0;
-            printf("[DB] %s flush UP after %ums\n", key_names[code], debounce_ms);
+    } else if (value == 0) { // up
+        uint64_t elapsed = now - keys[code].down_time;
+        if (elapsed < debounce_ms) {
+            uint64_t delay = debounce_ms - elapsed;
+            start_debounce_timer(code, delay);
+            fprintf(stderr, "[DB] %s pending up, %ums since press, flush at +%ums\n",
+                    key_name(code), (unsigned)elapsed, (unsigned)delay);
         } else {
-            emit_key(fd_out, code, 0, &keys[code].up_time);
+            emit_key(fd_out, code, 0, tv);
             keys[code].pressed = 0;
+            if(keys[code].timerfd>=0) { close(keys[code].timerfd); keys[code].timerfd=-1; }
+            fprintf(stderr, "[DB] %s immediate up\n", key_name(code));
         }
+    } else if (value == 2) { // repeat
+        emit_key(fd_out, code, 2, tv);
     }
 }
 
 // ---------- SIGTERM ----------
 static void handle_sigterm(int signum) {
     (void)signum;
-    for(int k=0;k<MAX_KEYCODE;k++) if(keys[k].pressed) emit_key(fd_out,k,0,NULL);
+    for(int k=0;k<MAX_KEYCODE;k++) {
+        if(keys[k].pressed) emit_key(fd_out,k,0,NULL);
+        if(keys[k].timerfd>=0) close(keys[k].timerfd);
+    }
     if(fd_out>=0) { ioctl(fd_out, UI_DEV_DESTROY); close(fd_out); fd_out=-1; }
     if(fd_in>=0) { close(fd_in); fd_in=-1; }
     if(sock_fd>=0) { close(sock_fd); sock_fd=-1; }
@@ -429,12 +250,8 @@ static void *socket_thread_fn(void *arg) {
                 fprintf(stderr, "STOP received but daemon not running, ignoring\n");
             } else {
                 printf("STOP received\n");
-            
-                // Close input/output fds
                 if(fd_in >= 0) { close(fd_in); fd_in = -1; }
                 if(fd_out >= 0) { ioctl(fd_out, UI_DEV_DESTROY); close(fd_out); fd_out = -1; }
-            
-                // Clear running flag and mode bits
                 g_status.status_byte = 0;
                 g_status.timeout_ms = 0;
             }
@@ -464,16 +281,13 @@ static void *socket_thread_fn(void *arg) {
             printf("START %s mode=%c debounce=%ums FT ad=%d arrows=%d\n",
                     dev, mode, debounce_ms, ft_ad_enabled, ft_arrows_enabled);
             
-            // Open input
             fd_in = open(dev,O_RDONLY);
             if(fd_in<0) { perror("input open"); close(c); continue; }
             if(ioctl(fd_in, EVIOCGRAB, 1)<0) { perror("grab"); close(fd_in); fd_in=-1; close(c); continue; }
             
-            // Setup uinput
             fd_out = setup_uinput();
             if(fd_out<0) { close(fd_in); fd_in=-1; close(c); continue; }
             
-            // Update g_status
             g_status.status_byte = STATUS_RUNNING;
             if(mode=='d' || mode=='b') g_status.status_byte |= STATUS_DEBOUNCE;
             if(ft_ad_enabled || ft_arrows_enabled) g_status.status_byte |= STATUS_FLASHTAP;
@@ -483,7 +297,7 @@ static void *socket_thread_fn(void *arg) {
         }
         else if(strcmp(cmd, "STATUS") == 0) {
             uint8_t outbuf[2] = { g_status.status_byte, g_status.timeout_ms };
-            write(c, outbuf, 2);
+            (void)write(c, outbuf, 2);
         }
     
         close(c);
@@ -495,27 +309,57 @@ static void *socket_thread_fn(void *arg) {
 // ---------- Main ----------
 int main(void) {
     if(access("/dev/uinput",F_OK)!=0) {
-        fprintf(stderr,"You need uinput support for this program to function. What input stack are you on?\n");
+        fprintf(stderr,"You need uinput support for this program to function.\n");
         return 2;
     }
 
     signal(SIGTERM, handle_sigterm);
-
     pthread_create(&sock_thread,NULL,socket_thread_fn,NULL);
+
+    for(int i=0;i<MAX_KEYCODE;i++) keys[i].timerfd=-1;
 
     printf("Debounced daemon ready, waiting for commands...\n");
 
     while(running) {
         if(fd_in<0) { usleep(10000); continue; }
 
-        struct input_event ev;
-        ssize_t r = read(fd_in,&ev,sizeof(ev));
-        if(r!=sizeof(ev)) continue;
-        if(ev.type!=EV_KEY || ev.code>=MAX_KEYCODE) continue;
+        struct pollfd pfds[MAX_KEYCODE+1];
+        int nfds=0;
+        pfds[nfds++] = (struct pollfd){ fd_in, POLLIN, 0 };
+        for(int k=0;k<MAX_KEYCODE;k++)
+            if(keys[k].timerfd>=0)
+                pfds[nfds++] = (struct pollfd){ keys[k].timerfd, POLLIN, 0 };
 
-        if(ft_ad_enabled || ft_arrows_enabled) handle_flashtap(ev.code,ev.value);
-        process_debounce(fd_in, ev.code, ev.value);
+        int ret = poll(pfds,nfds,-1);
+        if(ret<=0) continue;
+
+        // check input device
+        if(pfds[0].revents & POLLIN) {
+            struct input_event ev;
+            ssize_t r = read(fd_in,&ev,sizeof(ev));
+            if(r==sizeof(ev) && ev.type==EV_KEY && ev.code<MAX_KEYCODE) {
+                if(ft_ad_enabled || ft_arrows_enabled) handle_flashtap(ev.code,ev.value);
+                process_debounce(ev.code, ev.value, &ev.time);
+            }
+        }
+
+        // check timers
+        for(int i=1;i<nfds;i++) {
+            if(pfds[i].revents & POLLIN) {
+                uint64_t expir;
+                (void)read(pfds[i].fd,&expir,sizeof(expir));
+                for(int k=0;k<MAX_KEYCODE;k++) {
+                    if(keys[k].timerfd==pfds[i].fd) {
+                        emit_key(fd_out,k,0,NULL);
+                        keys[k].pressed=0;
+                        close(keys[k].timerfd);
+                        keys[k].timerfd=-1;
+                        fprintf(stderr,"[DB] %s flush UP after %ums\n", key_name(k), debounce_ms);
+                        break;
+                    }
+                }
+            }
+        }
     }
-
     return 0;
 }
