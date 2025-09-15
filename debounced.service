@@ -4,7 +4,6 @@ Description=Keyboard Debounce Daemon
 [Service]
 Type=simple
 ExecStart=/usr/local/bin/debounced
-ExecStop=/usr/bin/pkill debounced --signal SIGTERM
 ExecReload=/usr/local/bin/debouncectl stop
 Restart=on-failure
 RestartSec=5
