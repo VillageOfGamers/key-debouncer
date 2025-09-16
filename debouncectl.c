@@ -92,15 +92,18 @@ static int show_status(void) {
 }
 
 static void print_usage(const char *prog) {
-    printf("Usage: %s stop || show || status || start <device> [timeout_ms] [mode] [FTpair]\n", prog);
-    printf("  stop: stops the daemon\n");
-    printf("  show: lists usable keyboards\n");
-    printf("  status: shows current status of the daemon\n");
-    printf("  start: starts the daemon with given arguments\n");
-    printf("  device: path to keyboard event node to start with\n");
-    printf("  timeout_ms: 1-100 ms [default: 50]\n");
-    printf("  mode: b (both), d (debounce only), f (FlashTap only) [default: d]\n");
-    printf("  FTpair: ad, arrows, both, none [default: none for d, ad for f/b]\n");
+    printf("Usage: %s stop|show|status\n", prog);
+    printf("       %s start <device> [timeout] [mode] [pair]\n\n", prog);
+    printf("Commands:\n");
+    printf("    stop: stops all debounce and FlashTap activity until next start\n");
+    printf("    show: lists potential keyboard device nodes in a human-readable format\n");
+    printf("    status: shows current status of the daemon process\n");
+    printf("    start: starts the daemon with the arguments provided (list below)\n\n");
+    printf("Arguments (only 'start' command uses arguments):\n");
+    printf("    device: path to keyboard event node to start with [REQUIRED, NO DEFAULT]\n");
+    printf("    timeout: length of time in ms to debounce each input for [default: 50]\n");
+    printf("    mode: b (both), d (debounce only), f (FlashTap only) [default: d]\n");
+    printf("    pair: ad, arrows, both, none [default: none for d, ad for f/b]\n");
 }
 
 // Check if symlink points to a path containing "mouse" or "wmi-event"
@@ -131,7 +134,7 @@ static void build_exclusion_list(char excluded[][PATH_MAX], int *exclude_count) 
             if (symlink_is_excluded(entry->d_name)) {
                 char devnode[PATH_MAX];
                 snprintf(devnode, sizeof(devnode), "/dev/input/%s", basename(target));
-                strncpy(excluded[(*exclude_count)++], devnode, PATH_MAX - 1);
+                snprintf(excluded[(*exclude_count)++], PATH_MAX, "%s", devnode);
             }
         }
         closedir(dir);
@@ -180,13 +183,13 @@ static int enumerate_devices(device_info *devs, int max) {
         ioctl(fd, EVIOCGID, &id);
         ioctl(fd, EVIOCGUNIQ(sizeof(serial)), serial);
         close(fd);
-        strncpy(devs[count].path, path, PATH_MAX - 1);
-        strncpy(devs[count].name, name, 255);
+        snprintf(devs[count].path, PATH_MAX, "%s", path);
+        snprintf(devs[count].name, sizeof(devs[count].name), "%s", name);
         devs[count].bustype = id.bustype;
         devs[count].vendor = id.vendor;
         devs[count].product = id.product;
         devs[count].version = id.version;
-        strncpy(devs[count].serial, serial, 255);
+        snprintf(devs[count].serial, sizeof(devs[count].serial), "%s", serial);
         count++;
     }
     closedir(dir);
@@ -233,7 +236,8 @@ static int send_cmd(const char *cmd) {
         return 1;
     }
     uint8_t status_code = 1;
-    read(sock, &status_code, 1);
+    ssize_t ret = read(sock, &status_code, 1);
+    (void)ret;
     close(sock);
     if (status_code == 1) {
         if (strncasecmp(cmd, "STOP", 4) == 0) {
@@ -256,7 +260,7 @@ int main(int argc, char *argv[]) {
     char mode = 'd';
     char ftpair[16] = "none";
     char device[PATH_MAX] = {0};
-    if (strcmp(argv[1], "stop") == 0 || strcmp(argv[1], "show") == 0 || strcmp(argv[1], "status") == 0) {
+    if (strcmp(argv[1], "stop") == 0 || strcmp(argv[1], "show") == 0 || strcmp(argv[1], "status") == 0 || strcmp(argv[1], "--help") == 0) {
         if (argc != 2) {
             fprintf(stderr, "[%s] does not take extra arguments\n", argv[1]);
             print_usage(argv[0]);
@@ -265,6 +269,7 @@ int main(int argc, char *argv[]) {
         if (strcmp(argv[1], "stop") == 0) return send_cmd("STOP");
         if (strcmp(argv[1], "show") == 0) return show_devices();
         if (strcmp(argv[1], "status") == 0) return show_status();
+        if (strcmp(argv[1], "--help") == 0) { print_usage(argv[0]); return 0; }
     } else if (strcmp(argv[1], "start") == 0) {
         if (argc < 3 || argc > 6) {
             fprintf(stderr, "'start' requires 1-4 additional args\n");

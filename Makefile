@@ -14,6 +14,7 @@ PREFIX ?= /usr/local
 BINDIR = $(PREFIX)/bin
 SYSTEMD_UNITDIR = /etc/systemd/system
 SERVICE = debounced.service
+GROUP = input
 
 MODE ?= release
 CC = gcc
@@ -37,15 +38,23 @@ $(OUTBIN_DAEMON): $(SRC_DAEMON)
 
 $(OUTBIN_CTL): $(SRC_CTL)
 	mkdir -p $(OUTDIR)
-	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS) -lncurses
+	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS)
 
 install: all
-	install -Dm755 $(OUTBIN_DAEMON) $(DESTDIR)$(BINDIR)/$(TARGET_DAEMON)
-	install -Dm755 $(OUTBIN_CTL) $(DESTDIR)$(BINDIR)/$(TARGET_CTL)
-	install -Dm644 $(SERVICE) $(DESTDIR)$(SYSTEMD_UNITDIR)/$(SERVICE)
-	@echo "Adding $(SUDO_USER) to input group..."
-	@usermod -aG input $(SUDO_USER)
-	@echo "You may need to log out and back in for group changes to take effect."
+	@install -Dm755 $(OUTBIN_DAEMON) $(DESTDIR)$(BINDIR)/$(TARGET_DAEMON)
+	@install -Dm755 $(OUTBIN_CTL) $(DESTDIR)$(BINDIR)/$(TARGET_CTL)
+	@install -Dm644 $(SERVICE) $(DESTDIR)$(SYSTEMD_UNITDIR)/$(SERVICE)
+	@if [ -n "$$SUDO_USER" ]; then \
+		if ! id -nG "$$SUDO_USER" | grep -qw "$(GROUP)"; then \
+			echo "Adding user $$SUDO_USER to group $(GROUP)..."; \
+			usermod -aG $(GROUP) "$$SUDO_USER"; \
+			echo "You may need to log out and log back in for the group changes to take effect."; \
+		else \
+			echo "User $$SUDO_USER is already in group $(GROUP), nothing to do."; \
+		fi \
+	else \
+		echo "Not run via sudo, skipping user group check."; \
+	fi \
 
 clean:
 	$(RM) -r $(OUTDIR)

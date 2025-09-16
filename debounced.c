@@ -84,7 +84,8 @@ static void emit(int fd, int type, int code, int value, const struct timeval *tv
         ev.time = *tv;
     else
         gettimeofday(&ev.time, NULL);
-    (void)write(fd, &ev, sizeof(ev));
+    ssize_t ret = write(fd, &ev, sizeof(ev));
+    (void)ret;
 }
 
 static void emit_key(int fd, int code, int value, const struct timeval *tv) {
@@ -111,7 +112,8 @@ static int setup_uinput(void) {
     uidev.id.vendor = 0x1234;
     uidev.id.product = 0x5678;
     uidev.id.version = 1;
-    (void)write(fd, &uidev, sizeof(uidev));
+    ssize_t ret = write(fd, &uidev, sizeof(uidev));
+    (void)ret;
     ioctl(fd, UI_DEV_CREATE);
     return fd;
 }
@@ -315,13 +317,15 @@ static void *socket_thread_fn(void *arg) {
                 g_status.status_byte = 0;
                 g_status.timeout_ms = 0;
             }
-            write(c, &status_code, 1);
+            ssize_t ret = write(c, &status_code, 1);
+            (void)ret;
         } else if (strncasecmp(cmd, "START", 5) == 0) {
             uint8_t status_code = 0;
             if (g_status.status_byte & STATUS_RUNNING) {
                 fprintf(stderr, "START received but daemon already running, ignoring.\n");
                 status_code = 1;
-                write(c, &status_code, 1);
+                ssize_t ret = write(c, &status_code, 1);
+                (void)ret;
                 close(c);
                 continue;
             }
@@ -372,10 +376,12 @@ static void *socket_thread_fn(void *arg) {
             if (ft_arrows_enabled) g_status.status_byte |= STATUS_PAIR_ARROWS;
             g_status.timeout_ms = debounce_ms;
             ft_active_ad = ft_active_arrows = -1;
-            write(c, &status_code, 1);
+            ssize_t ret = write(c, &status_code, 1);
+            (void)ret;
         } else if (strncasecmp(cmd, "STATUS", 6) == 0) {
             uint8_t outbuf[2] = {g_status.status_byte, g_status.timeout_ms};
-            (void)write(c, outbuf, 2);
+            ssize_t ret = write(c, outbuf, 2);
+            (void)ret;
         }
         close(c);
     }
@@ -424,7 +430,8 @@ int main(int argc, char *argv[]) {
         for (int i = 1; i < nfds; i++) {
             if (pfds[i].revents & POLLIN) {
                 unsigned long long expir;
-                (void)read(pfds[i].fd, &expir, sizeof(expir));
+                ssize_t ret = read(pfds[i].fd, &expir, sizeof(expir));
+                (void)ret;
                 for (int k = 0; k < MAX_KEYCODE; k++) {
                     if (keys[k].timerfd == pfds[i].fd) {
                         unsigned long long now = now_ms();
