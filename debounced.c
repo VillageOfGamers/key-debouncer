@@ -37,7 +37,7 @@ static status_t g_status = {0};
 
 #define MAX_KEYCODE 256
 #define CONTROL_SOCKET_PATH "/run/debounced.sock"
-#define MAX_DEBOUNCE_MS 100
+#define MAX_DEBOUNCE_MS 250
 
 // ---------- Globals ----------
 typedef struct {
@@ -57,7 +57,7 @@ static int ft_ad_enabled = 0, ft_arrows_enabled = 0;
 static int ft_active_ad = -1, ft_active_arrows = -1;
 static int verbose = 0;
 
-// ---------- FlashTap ----------
+// ---------- FlashTap struct ----------
 typedef struct {
     int key1, key2;
     int phys[2];
@@ -71,7 +71,7 @@ static const char *key_name(int code) {
     return n ? n : "UNKNOWN";
 }
 
-// ---------- Helpers ----------
+// ---------- Mini helpers ----------
 static unsigned long long now_ms(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -93,7 +93,40 @@ static void emit_key(int fd, int code, int value, const struct timeval *tv) {
     emit(fd, EV_SYN, SYN_REPORT, 0, tv);
 }
 
-// ---------- uinput ----------
+// ---------- State reset function ----------
+static void reset_state(void) {
+    // Release grabbed input device
+    if (fd_in >= 0) {
+        if (ioctl(fd_in, EVIOCGRAB, 0) < 0) {
+            perror("release grab");
+        }
+        close(fd_in);
+        fd_in = -1;
+    }
+    // Destroy uinput device
+    if (fd_out >= 0) {
+        if (ioctl(fd_out, UI_DEV_DESTROY) < 0) {
+            perror("destroy uinput device");
+        }
+        close(fd_out);
+        fd_out = -1;
+    }
+    // Clear key states
+    for (int k = 0; k < MAX_KEYCODE; k++) {
+        if (keys[k].timerfd >= 0) {
+            close(keys[k].timerfd);
+            keys[k].timerfd = -1;
+        }
+        keys[k].pressed = 0;
+        keys[k].down_time = 0;
+        keys[k].last_event_ms = 0;
+    }
+    ft_active_ad = ft_active_arrows = -1;
+    g_status.status_byte = 0;
+    g_status.timeout_ms = 0;
+}
+
+// ---------- Virtual keyboard instantiation ----------
 static int setup_uinput(void) {
     int fd = open("/dev/uinput", O_WRONLY | O_NONBLOCK);
     if (fd < 0) {
@@ -118,7 +151,7 @@ static int setup_uinput(void) {
     return fd;
 }
 
-// ---------- FlashTap ----------
+// ---------- FlashTap logic ----------
 static void handle_flashtap(int code, int value) {
     FlashPair *fp = NULL;
     int *ft_active_ptr = NULL;
@@ -156,7 +189,7 @@ static void handle_flashtap(int code, int value) {
     }
 }
 
-// ---------- Debounce Timers ----------
+// ---------- Debounce timers ----------
 static void start_debounce_timer(int code, unsigned long long delay_ms) {
     if (keys[code].timerfd >= 0) {
         close(keys[code].timerfd);
@@ -178,7 +211,7 @@ static void start_debounce_timer(int code, unsigned long long delay_ms) {
     keys[code].timerfd = tfd;
 }
 
-// ---------- Debounce Processing ----------
+// ---------- Debounce processing ----------
 static void process_debounce(int code, int value, const struct timeval *tv) {
     unsigned long long now = now_ms();
     unsigned long long delta = now - keys[code].last_event_ms;  // compute delta before updating
@@ -218,22 +251,10 @@ static void process_debounce(int code, int value, const struct timeval *tv) {
     }
 }
 
-// ---------- SIGTERM ----------
+// ---------- SIGTERM handler ----------
 static void handle_sigterm(int signum) {
     (void)signum;
-    for (int k = 0; k < MAX_KEYCODE; k++) {
-        if (keys[k].pressed) emit_key(fd_out, k, 0, NULL);
-        if (keys[k].timerfd >= 0) close(keys[k].timerfd);
-    }
-    if (fd_out >= 0) {
-        ioctl(fd_out, UI_DEV_DESTROY);
-        close(fd_out);
-        fd_out = -1;
-    }
-    if (fd_in >= 0) {
-        close(fd_in);
-        fd_in = -1;
-    }
+    reset_state();
     if (sock_fd >= 0) {
         close(sock_fd);
         sock_fd = -1;
@@ -241,7 +262,7 @@ static void handle_sigterm(int signum) {
     exit(0);
 }
 
-// ---------- Socket handling ----------
+// ---------- Socket handler thread ----------
 static void *socket_thread_fn(void *arg) {
     (void)arg;
     struct sockaddr_un addr;
@@ -285,37 +306,12 @@ static void *socket_thread_fn(void *arg) {
         }
         if(strncasecmp(cmd, "STOP", 4) == 0) {
             uint8_t status_code = 0;
-            if(!(g_status.status_byte & STATUS_RUNNING)) {
+            if (!(g_status.status_byte & STATUS_RUNNING)) {
                 fprintf(stderr, "STOP received but daemon not running, ignoring.\n");
                 status_code = 1;
             } else {
                 printf("STOP received, cleaning up and releasing device nodes.\n");
-                if(fd_in >= 0) {
-                    if(ioctl(fd_in, EVIOCGRAB, 0) < 0) {
-                        perror("release grab");
-                    }
-                    close(fd_in);
-                    fd_in = -1;
-                }
-                if(fd_out >= 0) {
-                    if(ioctl(fd_out, UI_DEV_DESTROY) < 0) {
-                        perror("destroy uinput device");
-                    }
-                    close(fd_out);
-                    fd_out = -1;
-                }
-                for(int k = 0; k < MAX_KEYCODE; k++) {
-                    if(keys[k].timerfd >= 0) {
-                        close(keys[k].timerfd);
-                        keys[k].timerfd = -1;
-                    }
-                    keys[k].pressed = 0;
-                    keys[k].down_time = 0;
-                    keys[k].last_event_ms = 0;
-                }
-                ft_active_ad = ft_active_arrows = -1;
-                g_status.status_byte = 0;
-                g_status.timeout_ms = 0;
+                reset_state();
             }
             ssize_t ret = write(c, &status_code, 1);
             (void)ret;
@@ -388,7 +384,7 @@ static void *socket_thread_fn(void *arg) {
     return NULL;
 }
 
-// ---------- Main Loop ----------
+// ---------- Main program loop ----------
 int main(int argc, char *argv[]) {
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
@@ -408,6 +404,13 @@ int main(int argc, char *argv[]) {
     while (running) {
         if (fd_in < 0) {
             usleep(10000);
+            continue;
+        }
+        int version;
+        // Check if device disappeared
+        if (ioctl(fd_in, EVIOCGVERSION, &version) < 0) {
+            fprintf(stderr, "Keyboard device disappeared. Stopping and resetting state.\n");
+            reset_state();
             continue;
         }
         struct pollfd pfds[MAX_KEYCODE + 1];
