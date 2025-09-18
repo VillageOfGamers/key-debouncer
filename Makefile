@@ -54,7 +54,7 @@ install: all
 		fi \
 	else \
 		echo "Not run via sudo, skipping user group check."; \
-	fi \
+	fi
 
 clean:
 	$(RM) -r $(OUTDIR)
