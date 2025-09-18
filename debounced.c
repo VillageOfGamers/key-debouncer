@@ -56,6 +56,7 @@ static char mode = 'd';
 static int ft_ad_enabled = 0, ft_arrows_enabled = 0;
 static int ft_active_ad = -1, ft_active_arrows = -1;
 static int verbose = 0;
+static unsigned long long start_time_ms = 0;
 
 // ---------- FlashTap struct ----------
 typedef struct {
@@ -217,6 +218,10 @@ static void process_debounce(int code, int value, const struct timeval *tv) {
     unsigned long long delta = now - keys[code].last_event_ms;  // compute delta before updating
     keys[code].last_event_ms = now;
     if (value == 1) {  // DOWN
+        if (now - start_time_ms < debounce_ms) {
+            printf("[DB] Ignored %s DOWN during startup delay\n", key_name(code));
+            return;  // drop the event
+        }
         if (!keys[code].pressed) {
             emit_key(fd_out, code, 1, tv);
             keys[code].pressed = 1;
@@ -246,8 +251,12 @@ static void process_debounce(int code, int value, const struct timeval *tv) {
             if (verbose) printf("[DB] %s UP immediate, %llu ms since last event\n", key_name(code), delta);
         }
     } else if (value == 2) {  // REPEAT
-        emit_key(fd_out, code, 2, tv);
-        if (verbose) printf("[DB] %s REPEAT\n", key_name(code));
+        if (keys[code].pressed) {
+            emit_key(fd_out, code, 2, tv);
+            if (verbose) printf("[DB] %s REPEAT\n", key_name(code));
+        } else {
+            if (verbose) printf("[DB] Ignored %s REPEAT (key not pressed)\n", key_name(code));
+        }
     }
 }
 
@@ -372,6 +381,16 @@ static void *socket_thread_fn(void *arg) {
             if (ft_arrows_enabled) g_status.status_byte |= STATUS_PAIR_ARROWS;
             g_status.timeout_ms = debounce_ms;
             ft_active_ad = ft_active_arrows = -1;
+            start_time_ms = now_ms();
+            for (int k = 0; k < MAX_KEYCODE; k++) {
+                keys[k].pressed = 0;
+                keys[k].down_time = 0;
+                if (keys[k].timerfd >= 0) {
+                    close(keys[k].timerfd);
+                    keys[k].timerfd = -1;
+                }
+                keys[k].last_event_ms = 0;
+            }
             ssize_t ret = write(c, &status_code, 1);
             (void)ret;
         } else if (strncasecmp(cmd, "STATUS", 6) == 0) {
