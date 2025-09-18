@@ -36,3 +36,5 @@ dkms.conf
 *.dwo
 bin/
 Packaging/
+.debhelper/
+debounced/

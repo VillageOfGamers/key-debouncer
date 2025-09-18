@@ -1,0 +1,39 @@
+.TH debouncectl 1 "2025-09-18" "1.0" "Debounced Control Tool"
+.SH NAME
+debouncectl \- control tool for the debounced keyboard daemon
+.SH SYNOPSIS
+debouncectl stop|show|status
+.br
+debouncectl start <device> [timeout] [mode] [pair]
+.SH DESCRIPTION
+debouncectl is used to control the debounced keyboard daemon. It allows starting, stopping, and querying
+the daemon's current state. Most commands communicate with the daemon via its UNIX socket.
+.SH COMMANDS
+.TP
+stop
+Stops all debounce and FlashTap activity until the next start.
+.TP
+show
+Lists potential keyboard device nodes in a human-readable format.
+.TP
+status
+Shows the current status of the daemon process.
+.TP
+start
+Starts the daemon with the provided arguments (see ARGUMENTS below).
+.SH ARGUMENTS
+.TP
+device
+Path to the keyboard event node to use. Required; no default.
+.TP
+timeout
+Length of time in milliseconds to debounce each input. Default: 50 ms.
+.TP
+mode
+Daemon mode: b (both), d (debounce only), f (FlashTap only). Default: d.
+.TP
+pair
+FlashTap key pair selection: ad, arrows, both, none. Defaults: none for mode d, ad for f/b.
+.SH SEE ALSO
+debounced(1)
+

@@ -3,8 +3,8 @@ Description=Keyboard Debounce Daemon
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/debounced
-ExecReload=/usr/local/bin/debouncectl stop
+ExecStart=/usr/bin/debounced
+ExecReload=/usr/bin/debouncectl stop
 Restart=on-failure
 RestartSec=5
 

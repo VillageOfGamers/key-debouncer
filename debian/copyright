@@ -1,0 +1,9 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Source: https://github.com/VillageOfGamers/key-debouncer
+Upstream-Name: debounced
+Upstream-Contact: Vincent Meadows <giantvince1@protonmail.com>
+
+Files: *
+Copyright: 2025 Vincent Meadows <giantvince1@protonmail.com>
+License: GPL-3+
+Reference: /usr/share/common-licenses/GPL-3 
