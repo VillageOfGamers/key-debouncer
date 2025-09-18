@@ -35,3 +35,4 @@ Mkfile.old
 dkms.conf
 *.dwo
 bin/
+Packaging/
