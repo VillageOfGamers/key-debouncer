@@ -134,7 +134,7 @@ jobs:
       - name: Install repo tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y reprepro createrepo-c rpm
+          sudo apt-get install -y reprepro createrepo-c
 
       - name: Update apt repo
         run: |
@@ -149,8 +149,6 @@ jobs:
           VERSION=${GITHUB_REF_NAME#v}
           for arch in x86_64 aarch64; do
             cp artifacts/rpm-${arch}/*.rpm dist-repo/rpm/${arch}/
-            echo "%_gpg_name $(gpg --list-secret-keys --keyid-format LONG | grep sec | awk '{print $2}' | cut -d'/' -f2)" > ~/.rpmmacros
-            rpmsign --addsign dist-repo/rpm/${arch}/*.rpm
             createrepo_c --update dist-repo/rpm/${arch}/
             gpg --batch --yes --detach-sign --armor \
               dist-repo/rpm/${arch}/repodata/repomd.xml
