@@ -15,6 +15,8 @@ BuildRequires:  pkgconfig
 Requires:       libevdev
 Requires:       systemd
 
+%global debug_package %{nil}
+
 %description
 Simple daemon to debounce keyboard input and provide FlashTap features.
 

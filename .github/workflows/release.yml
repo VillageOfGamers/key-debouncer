@@ -21,16 +21,25 @@ jobs:
 
       - name: Install dependencies
         run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential gcc make \
+            debhelper devscripts \
+            qemu-user-static binfmt-support
+
+      - name: Install arm64 cross-compilation deps
+        if: matrix.arch == 'arm64'
+        run: |
           sudo dpkg --add-architecture arm64
           sudo apt-get update
           sudo apt-get install -y \
-            build-essential \
-            gcc make \
             gcc-aarch64-linux-gnu \
-            libevdev-dev \
-            libevdev-dev:arm64 \
-            debhelper devscripts \
-            qemu-user-static binfmt-support
+            libevdev-dev:arm64
+
+      - name: Install amd64 deps
+        if: matrix.arch == 'amd64'
+        run: |
+          sudo apt-get install -y libevdev-dev
 
       - name: Build package
         run: |
