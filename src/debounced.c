@@ -72,7 +72,7 @@ typedef struct {
     unsigned long long last_event_ms;
 } KeyState;
 
-static KeyState keys[MAX_KEYCODE];
+static KeyState keys[KEY_MAX];
 static int fd_in = -1, fd_out = -1, sock_fd = -1;
 static pthread_t sock_thread;
 static atomic_int running = 1;
@@ -218,8 +218,9 @@ static void handle_flashtap(int code, int value) {
 
 // ---------- Post-debounce event router ----------
 static void post_debounce_event(int code, int value, const struct timeval *tv) {
-    if ((ft_ad_enabled && (code == pair_ad.key1 || code == pair_ad.key2)) ||
-        (ft_arrows_enabled && (code == pair_ar.key1 || code == pair_ar.key2))) {
+    if ((mode == 'f' || mode == 'b') &&
+        ((ft_ad_enabled && (code == pair_ad.key1 || code == pair_ad.key2)) ||
+         (ft_arrows_enabled && (code == pair_ar.key1 || code == pair_ar.key2)))) {
         handle_flashtap(code, value);
     } else {
         emit_key(fd_out, code, value, tv);
@@ -254,10 +255,7 @@ static void process_debounce(int code, int value, const struct timeval *tv) {
     unsigned long long delta = now - keys[code].last_event_ms;  // compute delta before updating
     keys[code].last_event_ms = now;
     if (value == 1) {  // DOWN
-        if (now - start_time_ms < debounce_ms) {
-            printf("[DB] Ignored %s DOWN during startup delay\n", key_name(code));
-            return;  // drop the event
-        }
+
         if (!keys[code].pressed) {
             post_debounce_event(code, 1, tv);
             keys[code].pressed = 1;
@@ -413,7 +411,7 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "You need uinput support for this program to function.\n");
         return 2;
     }
-    for (int i = 0; i < MAX_KEYCODE; i++) keys[i].timerfd = -1;
+    for (int i = 0; i < KEY_MAX; i++) keys[i].timerfd = -1;
     signal(SIGTERM, handle_sigterm);
     pthread_create(&sock_thread, NULL, socket_thread_fn, NULL);
     printf("Debounced daemon ready%s.\n", verbose ? " (verbose)" : "");
@@ -424,12 +422,14 @@ int main(int argc, char *argv[]) {
         }
 
         if (fd_in < 0) {
-            // Idle — wait for a command
             pthread_mutex_lock(&g_cmd_mutex);
-            while (g_cmd.type == CMD_NONE && atomic_load(&running))
-                pthread_cond_wait(&g_cmd_pending, &g_cmd_mutex);
+            while (g_cmd.type == CMD_NONE && atomic_load(&running) && !atomic_load(&shutdown_requested)) {
+                struct timespec ts;
+                clock_gettime(CLOCK_REALTIME, &ts);
+                ts.tv_sec += 1; // wake up every second to check flags
+                pthread_cond_timedwait(&g_cmd_pending, &g_cmd_mutex, &ts);
+            }
             pthread_mutex_unlock(&g_cmd_mutex);
-            // fall through to command processing below
         }
 
         // Check for pending command
@@ -459,10 +459,18 @@ int main(int argc, char *argv[]) {
                            g_cmd.device, mode, debounce_ms, ft_ad_enabled, ft_arrows_enabled);
 
                     fd_in = open(g_cmd.device, O_RDONLY);
-                    if (fd_in < 0) {
-                        perror("input open");
-                        g_cmd_result = 1;
-                        break;
+                    if (fd_in < 0) { perror("input open"); g_cmd_result = 1; break; }
+
+                    // Force-release any stuck keys before grabbing
+                    int fd_in_write = open(g_cmd.device, O_WRONLY);
+                    if (fd_in_write >= 0) {
+                        uint8_t key_bits[(MAX_KEYCODE + 7) / 8] = {0};
+                        ioctl(fd_in, EVIOCGKEY(sizeof(key_bits)), key_bits);
+                        for (int k = 0; k < MAX_KEYCODE; k++) {
+                            if (key_bits[k / 8] & (1 << (k % 8)))
+                                emit_key(fd_in_write, k, 0, NULL);
+                        }
+                        close(fd_in_write);
                     }
 
                     if (ioctl(fd_in, EVIOCGRAB, 1) < 0) {
@@ -492,6 +500,16 @@ int main(int argc, char *argv[]) {
                             keys[k].timerfd = -1;
                         }
                         keys[k].last_event_ms = 0;
+                    }
+
+                    // Sync initial key state from hardware
+                    uint8_t key_bits[(MAX_KEYCODE + 7) / 8] = {0};
+                    ioctl(fd_in, EVIOCGKEY(sizeof(key_bits)), key_bits);
+                    for (int k = 0; k < MAX_KEYCODE; k++) {
+                        if (key_bits[k / 8] & (1 << (k % 8))) {
+                            keys[k].pressed = 1;
+                            keys[k].down_time = start_time_ms;
+                        }
                     }
 
                     g_status.status_byte = STATUS_RUNNING;
@@ -542,8 +560,15 @@ int main(int argc, char *argv[]) {
         if (pfds[0].revents & POLLIN) {
             struct input_event ev;
             ssize_t r = read(fd_in, &ev, sizeof(ev));
-            if (r == sizeof(ev) && ev.type == EV_KEY && ev.code < MAX_KEYCODE) {
-                process_debounce(ev.code, ev.value, &ev.time);
+            if (r == sizeof(ev) && ev.type == EV_KEY) {
+                if (ev.code < MAX_KEYCODE) {
+                    if (mode == 'f')
+                        post_debounce_event(ev.code, ev.value, &ev.time);
+                    else
+                        process_debounce(ev.code, ev.value, &ev.time);
+                } else {
+                    emit_key(fd_out, ev.code, ev.value, &ev.time);
+                }
             }
         }
         // check timers

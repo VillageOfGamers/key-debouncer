@@ -1,0 +1,101 @@
+.TH DEBOUNCED 8 "2026-03-17" "2.0" "System Administration"
+.SH NAME
+debounced \- userspace keyboard debounce daemon
+.SH SYNOPSIS
+.B debounced
+.RB [ \-v | \-\-verbose ]
+.SH DESCRIPTION
+.B debounced
+is a daemon that intercepts keyboard input events from a specified
+.BR /dev/input/event *
+device node, applies per-key debounce filtering and optional FlashTap
+processing, and re-emits clean events via a virtual
+.BR uinput (4)
+keyboard device.
+.PP
+The daemon is controlled at runtime via
+.BR debouncectl (8)
+over a Unix domain socket at
+.IR /run/debounced.sock .
+It does not attach to any keyboard device on startup; a
+.B start
+command must be issued via
+.B debouncectl
+before any processing begins.
+.PP
+.B debounced
+requires
+.B uinput
+kernel support and must be run as root or with sufficient privileges to
+open
+.B /dev/uinput
+and grab input devices via
+.BR EVIOCGRAB .
+.SH OPTIONS
+.TP
+.BR \-v ", " \-\-verbose
+Enable verbose logging. Prints per-key debounce and FlashTap events to
+standard output, which is captured by the journal when running as a
+systemd service.
+.SH DEBOUNCE
+When debounce is active, each key press is passed through immediately.
+Key release events are held for the configured timeout period; if the
+key is pressed again within that window the pending release is cancelled
+and the key remains logically held. This eliminates spurious double
+keypresses caused by mechanical switch bounce.
+.PP
+The debounce timeout is global across all keys and is set at start time
+via
+.BR debouncectl (8).
+.SH FLASHTAP
+FlashTap is a directional input feature designed for gaming. When active
+on a key pair, pressing the second key of the pair while the first is
+held will immediately release the first key and activate the second,
+eliminating the mechanical deadband between releasing one directional
+key and pressing the other.
+.PP
+FlashTap operates on post-debounce events, meaning bounce suppression
+applies independently per key before FlashTap state is evaluated.
+.PP
+Two key pairs are supported:
+.TP
+.B ad
+The A and D keys (keycodes 30 and 32).
+.TP
+.B arrows
+The left and right arrow keys (keycodes 105 and 106).
+.SH OPERATING MODES
+.TP
+.B d
+Debounce only. FlashTap is disabled regardless of pair selection.
+.TP
+.B f
+FlashTap only. Debounce is disabled; events pass through to FlashTap
+processing immediately.
+.TP
+.B b
+Both debounce and FlashTap are active. FlashTap operates on
+post-debounce events.
+.SH FILES
+.TP
+.I /run/debounced.sock
+Unix domain socket used for communication with
+.BR debouncectl (8).
+.TP
+.I /dev/uinput
+Kernel virtual input device interface used to create the virtual
+keyboard.
+.TP
+.I /usr/lib/systemd/system/debounced.service
+systemd service unit file.
+.SH SIGNALS
+.TP
+.B SIGTERM
+Releases the grabbed input device, destroys the virtual keyboard, and
+exits cleanly.
+.SH SEE ALSO
+.BR debouncectl (8),
+.BR uinput (4),
+.BR evdev (4)
+.SH AUTHORS
+Vincent Meadows <giantvince1@protonmail.com>

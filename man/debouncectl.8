@@ -1,0 +1,135 @@
+.TH DEBOUNCECTL 8 "2026-03-17" "2.0" "System Administration"
+.SH NAME
+debouncectl \- control utility for the debounced keyboard debounce daemon
+.SH SYNOPSIS
+.B debouncectl
+.B stop|show|status
+.br
+.B debouncectl
+.B start
+.I device
+.RI [ timeout ]
+.RI [ mode ]
+.RI [ pair ]
+.SH DESCRIPTION
+.B debouncectl
+is the control utility for
+.BR debounced (8).
+It communicates with the daemon over a Unix domain socket at
+.I /run/debounced.sock
+to start and stop keyboard processing, query daemon status, and list
+available keyboard device nodes.
+.SH COMMANDS
+.TP
+.B stop
+Stops all debounce and FlashTap activity, releases the grabbed input
+device, and destroys the virtual keyboard. The daemon process remains
+running and can be restarted with
+.BR start .
+.TP
+.B show
+Lists potential keyboard device nodes under
+.I /dev/input/
+in a human-readable format, filtered to exclude mice and other
+non-keyboard devices. Devices are identified by resolving symlinks in
+.I /dev/input/by-id
+and
+.IR /dev/input/by-path .
+Users must be a member of the
+.B input
+group to use this command without root privileges.
+.TP
+.B status
+Displays the current status of the daemon, including whether it is
+actively processing input, the current operating mode, active FlashTap
+pairs, and the configured debounce timeout.
+.TP
+.B start \fIdevice\fR [\fItimeout\fR] [\fImode\fR] [\fIpair\fR]
+Instructs the daemon to begin processing input from the specified device
+node. See
+.B ARGUMENTS
+below.
+.TP
+.B \-\-help
+Prints usage information and exits.
+.SH ARGUMENTS
+The following arguments apply to the
+.B start
+command only.
+.TP
+.I device
+Path to the keyboard event node to process, e.g.
+.IR /dev/input/event0 .
+This argument is required and has no default. Use
+.B debouncectl show
+to identify the correct device node.
+.TP
+.I timeout
+Debounce timeout in milliseconds. Valid range is 1\(en250. Default is
+.BR 50 .
+A value of
+.B 0
+disables debounce timing entirely. Has no effect in FlashTap-only mode
+.RB ( f ).
+.TP
+.I mode
+Operating mode. One of:
+.RS
+.TP
+.B d
+Debounce only (default).
+.TP
+.B f
+FlashTap only.
+.TP
+.B b
+Both debounce and FlashTap.
+.RE
+.TP
+.I pair
+FlashTap key pair selection. One of:
+.RS
+.TP
+.B ad
+The A and D keys.
+.TP
+.B arrows
+The left and right arrow keys.
+.TP
+.B both
+Both pairs simultaneously.
+.TP
+.B none
+No FlashTap pairs (default for mode
+.BR d ).
+.RE
+.PP
+When mode is
+.B f
+or
+.BR b ,
+the default pair is
+.BR ad .
+.SH FILES
+.TP
+.I /run/debounced.sock
+Unix domain socket used for communication with
+.BR debounced (8).
+.SH EXIT STATUS
+.TP
+.B 0
+Success.
+.TP
+.B 1
+The command was ignored because the daemon was already in the requested
+state (e.g.
+.B start
+issued while already running, or
+.B stop
+issued while already idle), or the daemon could not be contacted.
+.SH SEE ALSO
+.BR debounced (8),
+.BR uinput (4),
+.BR evdev (4)
+.SH AUTHORS
+Vincent Meadows <giantvince1@protonmail.com>

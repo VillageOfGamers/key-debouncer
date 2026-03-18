@@ -1,6 +1,6 @@
 # Config
-SRC_DAEMON = debounced.c
-SRC_CTL    = debouncectl.c
+SRC_DAEMON = src/debounced.c
+SRC_CTL    = src/debouncectl.c
 TARGET_DAEMON = debounced
 TARGET_CTL    = debouncectl
 OUTDIR = bin
@@ -41,6 +41,8 @@ install: all
 	@install -Dm755 $(OUTBIN_DAEMON) $(DESTDIR)$(BINDIR)/$(TARGET_DAEMON)
 	@install -Dm755 $(OUTBIN_CTL) $(DESTDIR)$(BINDIR)/$(TARGET_CTL)
 	@install -Dm644 $(SERVICE) $(DESTDIR)$(SYSTEMD_UNITDIR)/$(SERVICE)
+	@install -Dm644 man/debounced.8 $(DESTDIR)$(PREFIX)/share/man/man8/debounced.8
+	@install -Dm644 man/debouncectl.8 $(DESTDIR)$(PREFIX)/share/man/man8/debouncectl.8
 	@if [ -n "$$SUDO_USER" ]; then \
 		if ! id -nG "$$SUDO_USER" | grep -qw "$(GROUP)"; then \
 			echo "Adding user $$SUDO_USER to group $(GROUP)..."; \
