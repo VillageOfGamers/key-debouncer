@@ -21,16 +21,23 @@ jobs:
 
       - name: Install dependencies
         run: |
+          sudo dpkg --add-architecture arm64
           sudo apt-get update
           sudo apt-get install -y \
             build-essential \
-            gcc make libevdev-dev \
+            gcc make \
+            gcc-aarch64-linux-gnu \
+            libevdev-dev \
+            libevdev-dev:arm64 \
             debhelper devscripts \
             qemu-user-static binfmt-support
 
       - name: Build package
         run: |
           VERSION=${GITHUB_REF_NAME#v}
+          if [ "${{ matrix.arch }}" = "arm64" ]; then
+            export CC=aarch64-linux-gnu-gcc
+          fi
           dpkg-buildpackage -us -uc -b --host-arch ${{ matrix.arch }}
           mkdir -p dist
           mv ../*.deb dist/
@@ -66,7 +73,7 @@ jobs:
           VERSION=${GITHUB_REF_NAME#v}
           tar czf ~/rpmbuild/SOURCES/debounced-${VERSION}.tar.gz \
             --transform "s,^,debounced-${VERSION}/," \
-            src/ man/ Makefile debounced.service
+            src/ man/ Makefile debounced.service LICENSE
           rpmbuild -bb \
             --target ${{ matrix.arch }} \
             rpm/debounced.spec

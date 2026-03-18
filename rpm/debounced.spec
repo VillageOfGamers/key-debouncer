@@ -45,8 +45,6 @@ Simple daemon to debounce keyboard input and provide FlashTap features.
 %{_mandir}/man8/debouncectl.8*
 
 %changelog
-* Thu Sep 18 2025 Vincent Meadows <giantvince1@protonmail.com> - 1.0-1
-- Initial release
 * Tue Mar 17 2026 Vincent Meadows <giantvince1@protonmail.com> - 2.0-1
 - Reworked debounced.c for thread safety: socket thread is now purely
   IPC, all device and key state management moved to main().
@@ -65,3 +63,5 @@ Simple daemon to debounce keyboard input and provide FlashTap features.
 - Added RPM spec and AUR PKGBUILD packaging metadata.
 - Added manpages for debounced(8) and debouncectl(8).
 - Unified all packaging helpers into main branch.
+* Thu Sep 18 2025 Vincent Meadows <giantvince1@protonmail.com> - 1.0-1
+- Initial release
