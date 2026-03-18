@@ -41,6 +41,8 @@ Simple daemon to debounce keyboard input and provide FlashTap features.
 %{_bindir}/debounced
 %{_bindir}/debouncectl
 %{_unitdir}/debounced.service
+%{_mandir}/man8/debounced.8*
+%{_mandir}/man8/debouncectl.8*
 
 %changelog
 * Thu Sep 18 2025 Vincent Meadows <giantvince1@protonmail.com> - 1.0-1
