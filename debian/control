@@ -1,0 +1,13 @@
+Source: debounced
+Section: utils
+Priority: optional
+Maintainer: Vincent Meadows <giantvince1@protonmail.com>
+Build-Depends: debhelper-compat (= 13), libevdev-dev, pkg-config, gcc, make
+Standards-Version: 4.6.0
+Homepage: https://github.com/VillageOfGamers/key-debouncer
+
+Package: debounced
+Architecture: amd64
+Depends: ${shlibs:Depends}, ${misc:Depends}, libevdev2, systemd
+Description: Userspace keyboard debounce daemon
+ Simple daemon to debounce keyboard input and provide FlashTap features.

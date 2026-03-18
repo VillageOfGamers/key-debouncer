@@ -7,12 +7,9 @@ OUTDIR = bin
 OUTBIN_DAEMON = $(OUTDIR)/$(TARGET_DAEMON)
 OUTBIN_CTL    = $(OUTDIR)/$(TARGET_CTL)
 
-DEBUGSYM_DAEMON = $(OUTBIN_DAEMON).pdb
-DEBUGSYM_CTL    = $(OUTBIN_CTL).pdb
-
 PREFIX ?= /usr/local
 BINDIR = $(PREFIX)/bin
-SYSTEMD_UNITDIR = /etc/systemd/system
+SYSTEMD_UNITDIR ?= /etc/systemd/system
 SERVICE = debounced.service
 GROUP = input
 

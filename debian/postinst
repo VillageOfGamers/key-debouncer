@@ -1,0 +1,12 @@
+#!/bin/sh
+set -e
+# Only run if invoked during install, not upgrade scripts with --configure
+if [ "$1" = "configure" ]; then
+    systemctl daemon-reload
+    systemctl enable debounced.service
+    systemctl start debounced.service || true
+    # Print advisory for users who want non-root access
+    echo "Users who want to run debouncectl without sudo must be in the 'input' group."
+    echo "Add yourself with: sudo usermod -aG input \$USER"
+fi
+exit 0

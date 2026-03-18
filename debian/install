@@ -1,0 +1,5 @@
+debounced usr/bin
+debouncectl usr/bin
+debounced.service usr/lib/systemd/system
+debounced.1 usr/share/man/man1
+debouncectl.1 usr/share/man/man1

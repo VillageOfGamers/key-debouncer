@@ -36,3 +36,8 @@ dkms.conf
 *.dwo
 bin/
 Packaging/
+debian/*.substvars
+debian/*.debhelper.log
+debian/files
+debian/debounced/
+debian/.debhelper/
