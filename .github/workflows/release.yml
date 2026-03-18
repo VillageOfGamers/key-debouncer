@@ -56,7 +56,7 @@ jobs:
       - name: Install dependencies
         run: |
           dnf install -y gcc make libevdev-devel rpm-build rpmdevtools \
-            createrepo_c qemu-user-static binfmt-support
+            createrepo_c qemu-user-static
 
       - name: Set up RPM build tree
         run: rpmdev-setuptree
