@@ -1,5 +1,5 @@
 bin/debounced usr/bin
 bin/debouncectl usr/bin
 debounced.service usr/lib/systemd/system
-debounced.8 usr/share/man/man8
-debouncectl.8 usr/share/man/man8
+man/debounced.8 usr/share/man/man8
+man/debouncectl.8 usr/share/man/man8
