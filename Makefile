@@ -18,7 +18,7 @@ CC = gcc
 CFLAGS_COMMON = -Wall -Wextra -std=gnu99
 
 ifeq ($(MODE),release)
-    CFLAGS = $(CFLAGS_COMMON) -O2 -march=native
+    CFLAGS = $(CFLAGS_COMMON) -O2
     LDFLAGS = -s
 else ifeq ($(MODE),dev)
     CFLAGS = $(CFLAGS_COMMON) -O0 -g

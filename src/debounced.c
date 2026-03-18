@@ -8,6 +8,7 @@
 #include <poll.h>
 #include <pthread.h>
 #include <signal.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -28,7 +29,31 @@ typedef struct {
 } status_t;
 static status_t g_status = {0};
 
-// Bit masks
+// ---------- Command channel ----------
+typedef enum {
+    CMD_NONE = 0,
+    CMD_START,
+    CMD_STOP,
+    CMD_STATUS
+} cmd_type_t;
+
+#define DEVICE_PATH_MAX 255
+
+typedef struct {
+    cmd_type_t type;
+    char device[DEVICE_PATH_MAX];
+    uint8_t timeout_ms;
+    char mode;
+    char ftpair[16];
+} pending_cmd_t;
+
+static pending_cmd_t g_cmd = {0};
+static uint8_t g_cmd_result = 0;
+static pthread_mutex_t g_cmd_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t g_cmd_pending = PTHREAD_COND_INITIALIZER;
+static pthread_cond_t g_cmd_done = PTHREAD_COND_INITIALIZER;
+
+// ---------- Bit masks ----------
 #define STATUS_RUNNING 0x80
 #define STATUS_DEBOUNCE 0x08
 #define STATUS_FLASHTAP 0x04
@@ -50,7 +75,8 @@ typedef struct {
 static KeyState keys[MAX_KEYCODE];
 static int fd_in = -1, fd_out = -1, sock_fd = -1;
 static pthread_t sock_thread;
-static int running = 1;
+static atomic_int running = 1;
+static atomic_int shutdown_requested = 0;
 static uint8_t debounce_ms = 50;
 static char mode = 'd';
 static int ft_ad_enabled = 0, ft_arrows_enabled = 0;
@@ -190,6 +216,16 @@ static void handle_flashtap(int code, int value) {
     }
 }
 
+// ---------- Post-debounce event router ----------
+static void post_debounce_event(int code, int value, const struct timeval *tv) {
+    if ((ft_ad_enabled && (code == pair_ad.key1 || code == pair_ad.key2)) ||
+        (ft_arrows_enabled && (code == pair_ar.key1 || code == pair_ar.key2))) {
+        handle_flashtap(code, value);
+    } else {
+        emit_key(fd_out, code, value, tv);
+    }
+}
+
 // ---------- Debounce timers ----------
 static void start_debounce_timer(int code, unsigned long long delay_ms) {
     if (keys[code].timerfd >= 0) {
@@ -223,7 +259,7 @@ static void process_debounce(int code, int value, const struct timeval *tv) {
             return;  // drop the event
         }
         if (!keys[code].pressed) {
-            emit_key(fd_out, code, 1, tv);
+            post_debounce_event(code, 1, tv);
             keys[code].pressed = 1;
             keys[code].down_time = now;
             keys[code].timerfd = -1;
@@ -245,7 +281,7 @@ static void process_debounce(int code, int value, const struct timeval *tv) {
                 printf("[DB] %s UP pending, %llu ms since press, flush after %ums, %llu ms since last event\n",
                        key_name(code), (unsigned long long)elapsed, (unsigned)(debounce_ms - elapsed), delta);
         } else {
-            emit_key(fd_out, code, 0, tv);
+            post_debounce_event(code, 0, tv);
             keys[code].pressed = 0;
             keys[code].timerfd = -1;
             if (verbose) printf("[DB] %s UP immediate, %llu ms since last event\n", key_name(code), delta);
@@ -263,12 +299,7 @@ static void process_debounce(int code, int value, const struct timeval *tv) {
 // ---------- SIGTERM handler ----------
 static void handle_sigterm(int signum) {
     (void)signum;
-    reset_state();
-    if (sock_fd >= 0) {
-        close(sock_fd);
-        sock_fd = -1;
-    }
-    exit(0);
+    atomic_store(&shutdown_requested, 1);
 }
 
 // ---------- Socket handler thread ----------
@@ -278,128 +309,94 @@ static void *socket_thread_fn(void *arg) {
     sock_fd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (sock_fd < 0) {
         perror("socket");
-        running = 0;
+        atomic_store(&running, 0);
         return NULL;
     }
+
     unlink(CONTROL_SOCKET_PATH);
     memset(&addr, 0, sizeof(addr));
     addr.sun_family = AF_UNIX;
     strncpy(addr.sun_path, CONTROL_SOCKET_PATH, sizeof(addr.sun_path) - 1);
+
     if (bind(sock_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
         perror("bind");
         close(sock_fd);
-        running = 0;
+        atomic_store(&running, 0);
         return NULL;
     }
+
     chmod(CONTROL_SOCKET_PATH, 0666);
+
     if (listen(sock_fd, 1) < 0) {
         perror("listen");
         close(sock_fd);
-        running = 0;
+        atomic_store(&running, 0);
         return NULL;
     }
-    while (running) {
+
+    while (atomic_load(&running)) {
         int c = accept(sock_fd, NULL, NULL);
         if (c < 0) continue;
+
         char buf[512];
         int r = read(c, buf, sizeof(buf) - 1);
-        if (r <= 0) {
-            close(c);
-            continue;
-        }
+        if (r <= 0) { close(c); continue; }
         buf[r] = '\0';
+
         char *cmd = strtok(buf, " \t\n");
-        if (!cmd) {
+        if (!cmd) { close(c); continue; }
+
+        pthread_mutex_lock(&g_cmd_mutex);
+
+        if (strncasecmp(cmd, "STOP", 4) == 0) {
+            g_cmd.type = CMD_STOP;
+        } else if (strncasecmp(cmd, "START", 5) == 0) {
+            char *dev  = strtok(NULL, " \t\n");
+            char *t    = strtok(NULL, " \t\n");
+            char *m    = strtok(NULL, " \t\n");
+            char *pair = strtok(NULL, " \t\n");
+            if (!dev || !t || !m || !pair) {
+                pthread_mutex_unlock(&g_cmd_mutex);
+                close(c);
+                continue;
+            }
+            g_cmd.type = CMD_START;
+            strncpy(g_cmd.device, dev, DEVICE_PATH_MAX - 1);
+            g_cmd.device[DEVICE_PATH_MAX - 1] = '\0';
+            g_cmd.timeout_ms = (uint8_t)atoi(t);
+            g_cmd.mode = m[0];
+            strncpy(g_cmd.ftpair, pair, sizeof(g_cmd.ftpair) - 1);
+            g_cmd.ftpair[sizeof(g_cmd.ftpair) - 1] = '\0';
+        } else if (strncasecmp(cmd, "STATUS", 6) == 0) {
+            g_cmd.type = CMD_STATUS;
+        } else {
+            pthread_mutex_unlock(&g_cmd_mutex);
             close(c);
             continue;
         }
-        if(strncasecmp(cmd, "STOP", 4) == 0) {
-            uint8_t status_code = 0;
-            if (!(g_status.status_byte & STATUS_RUNNING)) {
-                fprintf(stderr, "STOP received but daemon not running, ignoring.\n");
-                status_code = 1;
-            } else {
-                printf("STOP received, cleaning up and releasing device nodes.\n");
-                reset_state();
-            }
-            ssize_t ret = write(c, &status_code, 1);
-            (void)ret;
-        } else if (strncasecmp(cmd, "START", 5) == 0) {
-            uint8_t status_code = 0;
-            if (g_status.status_byte & STATUS_RUNNING) {
-                fprintf(stderr, "START received but daemon already running, ignoring.\n");
-                status_code = 1;
-                ssize_t ret = write(c, &status_code, 1);
-                (void)ret;
-                close(c);
-                continue;
-            }
-            char *dev = strtok(NULL, " \t\n");
-            char *t = strtok(NULL, " \t\n");
-            char *m = strtok(NULL, " \t\n");
-            char *pairs = strtok(NULL, " \t\n");
-            if (!dev || !t || !m || !pairs) {
-                close(c);
-                continue;
-            }
-            debounce_ms = (uint8_t)atoi(t);
-            if (debounce_ms > MAX_DEBOUNCE_MS) debounce_ms = MAX_DEBOUNCE_MS;
-            mode = m[0];
-            ft_ad_enabled = ft_arrows_enabled = 0;
-            if (strcasecmp(pairs, "ad") == 0)
-                ft_ad_enabled = 1;
-            else if (strcasecmp(pairs, "arrows") == 0)
-                ft_arrows_enabled = 1;
-            else if (strcasecmp(pairs, "both") == 0)
-                ft_ad_enabled = ft_arrows_enabled = 1;
-            printf("START %s mode=%c debounce=%ums FT ad=%d arrows=%d\n", dev, mode, debounce_ms, ft_ad_enabled,
-                   ft_arrows_enabled);
-            fd_in = open(dev, O_RDONLY);
-            if (fd_in < 0) {
-                perror("input open");
-                close(c);
-                continue;
-            }
-            if (ioctl(fd_in, EVIOCGRAB, 1) < 0) {
-                perror("grab");
-                close(fd_in);
-                fd_in = -1;
-                close(c);
-                continue;
-            }
-            fd_out = setup_uinput();
-            if (fd_out < 0) {
-                close(fd_in);
-                fd_in = -1;
-                close(c);
-                continue;
-            }
-            g_status.status_byte = STATUS_RUNNING;
-            if (mode == 'd' || mode == 'b') g_status.status_byte |= STATUS_DEBOUNCE;
-            if (ft_ad_enabled || ft_arrows_enabled) g_status.status_byte |= STATUS_FLASHTAP;
-            if (ft_ad_enabled) g_status.status_byte |= STATUS_PAIR_AD;
-            if (ft_arrows_enabled) g_status.status_byte |= STATUS_PAIR_ARROWS;
-            g_status.timeout_ms = debounce_ms;
-            ft_active_ad = ft_active_arrows = -1;
-            start_time_ms = now_ms();
-            for (int k = 0; k < MAX_KEYCODE; k++) {
-                keys[k].pressed = 0;
-                keys[k].down_time = 0;
-                if (keys[k].timerfd >= 0) {
-                    close(keys[k].timerfd);
-                    keys[k].timerfd = -1;
-                }
-                keys[k].last_event_ms = 0;
-            }
-            ssize_t ret = write(c, &status_code, 1);
-            (void)ret;
-        } else if (strncasecmp(cmd, "STATUS", 6) == 0) {
+
+            cmd_type_t saved_type = g_cmd.type;
+
+            // Signal main() and wait for result
+            pthread_cond_signal(&g_cmd_pending);
+            pthread_cond_wait(&g_cmd_done, &g_cmd_mutex);
+
+            uint8_t result = g_cmd_result;
+            pthread_mutex_unlock(&g_cmd_mutex);
+
+            // Send response
+            if (saved_type == CMD_STATUS) {
             uint8_t outbuf[2] = {g_status.status_byte, g_status.timeout_ms};
             ssize_t ret = write(c, outbuf, 2);
             (void)ret;
+        } else {
+            ssize_t ret = write(c, &result, 1);
+            (void)ret;
         }
+
         close(c);
     }
+
     return NULL;
 }
 
@@ -416,15 +413,117 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "You need uinput support for this program to function.\n");
         return 2;
     }
+    for (int i = 0; i < MAX_KEYCODE; i++) keys[i].timerfd = -1;
     signal(SIGTERM, handle_sigterm);
     pthread_create(&sock_thread, NULL, socket_thread_fn, NULL);
-    for (int i = 0; i < MAX_KEYCODE; i++) keys[i].timerfd = -1;
     printf("Debounced daemon ready%s.\n", verbose ? " (verbose)" : "");
-    while (running) {
-        if (fd_in < 0) {
-            usleep(10000);
-            continue;
+    while (atomic_load(&running)) {
+        if (atomic_load(&shutdown_requested)) {
+            reset_state();
+            break;
         }
+
+        if (fd_in < 0) {
+            // Idle — wait for a command
+            pthread_mutex_lock(&g_cmd_mutex);
+            while (g_cmd.type == CMD_NONE && atomic_load(&running))
+                pthread_cond_wait(&g_cmd_pending, &g_cmd_mutex);
+            pthread_mutex_unlock(&g_cmd_mutex);
+            // fall through to command processing below
+        }
+
+        // Check for pending command
+        pthread_mutex_lock(&g_cmd_mutex);
+        if (g_cmd.type != CMD_NONE) {
+            switch (g_cmd.type) {
+                case CMD_START:
+                    if (g_status.status_byte & STATUS_RUNNING) {
+                        fprintf(stderr, "START received but daemon already running, ignoring.\n");
+                        g_cmd_result = 1;
+                        break;
+                    }
+
+                    debounce_ms = g_cmd.timeout_ms;
+                    if (debounce_ms > MAX_DEBOUNCE_MS) debounce_ms = MAX_DEBOUNCE_MS;
+                    mode = g_cmd.mode;
+                
+                    ft_ad_enabled = ft_arrows_enabled = 0;
+                    if (strcasecmp(g_cmd.ftpair, "ad") == 0)
+                        ft_ad_enabled = 1;
+                    else if (strcasecmp(g_cmd.ftpair, "arrows") == 0)
+                        ft_arrows_enabled = 1;
+                    else if (strcasecmp(g_cmd.ftpair, "both") == 0)
+                        ft_ad_enabled = ft_arrows_enabled = 1;
+
+                    printf("START %s mode=%c debounce=%ums FT ad=%d arrows=%d\n",
+                           g_cmd.device, mode, debounce_ms, ft_ad_enabled, ft_arrows_enabled);
+
+                    fd_in = open(g_cmd.device, O_RDONLY);
+                    if (fd_in < 0) {
+                        perror("input open");
+                        g_cmd_result = 1;
+                        break;
+                    }
+
+                    if (ioctl(fd_in, EVIOCGRAB, 1) < 0) {
+                        perror("grab");
+                        close(fd_in);
+                        fd_in = -1;
+                        g_cmd_result = 1;
+                        break;
+                    }
+
+                    fd_out = setup_uinput();
+                    if (fd_out < 0) {
+                        close(fd_in);
+                        fd_in = -1;
+                        g_cmd_result = 1;
+                        break;
+                    }
+
+                    // Reset key state
+                    ft_active_ad = ft_active_arrows = -1;
+                    start_time_ms = now_ms();
+                    for (int k = 0; k < MAX_KEYCODE; k++) {
+                        keys[k].pressed = 0;
+                        keys[k].down_time = 0;
+                        if (keys[k].timerfd >= 0) {
+                            close(keys[k].timerfd);
+                            keys[k].timerfd = -1;
+                        }
+                        keys[k].last_event_ms = 0;
+                    }
+
+                    g_status.status_byte = STATUS_RUNNING;
+                    if (mode == 'd' || mode == 'b') g_status.status_byte |= STATUS_DEBOUNCE;
+                    if (ft_ad_enabled || ft_arrows_enabled) g_status.status_byte |= STATUS_FLASHTAP;
+                    if (ft_ad_enabled) g_status.status_byte |= STATUS_PAIR_AD;
+                    if (ft_arrows_enabled) g_status.status_byte |= STATUS_PAIR_ARROWS;
+                    g_status.timeout_ms = debounce_ms;
+
+                    g_cmd_result = 0;
+                    break;
+                case CMD_STOP:
+                    if (!(g_status.status_byte & STATUS_RUNNING)) {
+                        fprintf(stderr, "STOP received but daemon not running, ignoring.\n");
+                        g_cmd_result = 1;
+                    } else {
+                        printf("STOP received, cleaning up and releasing device nodes.\n");
+                        reset_state();
+                        g_cmd_result = 0;
+                    }
+                    break;
+                case CMD_STATUS:
+                    g_cmd_result = 0; // result unused for STATUS, socket thread reads g_status directly
+                    break;
+                default:
+                    break;
+            }
+            g_cmd.type = CMD_NONE;
+            pthread_cond_signal(&g_cmd_done);
+        }
+        pthread_mutex_unlock(&g_cmd_mutex);
+        if (fd_in < 0) continue;
         int version;
         // Check if device disappeared
         if (ioctl(fd_in, EVIOCGVERSION, &version) < 0) {
@@ -444,7 +543,6 @@ int main(int argc, char *argv[]) {
             struct input_event ev;
             ssize_t r = read(fd_in, &ev, sizeof(ev));
             if (r == sizeof(ev) && ev.type == EV_KEY && ev.code < MAX_KEYCODE) {
-                if (ft_ad_enabled || ft_arrows_enabled) handle_flashtap(ev.code, ev.value);
                 process_debounce(ev.code, ev.value, &ev.time);
             }
         }
@@ -458,7 +556,7 @@ int main(int argc, char *argv[]) {
                     if (keys[k].timerfd == pfds[i].fd) {
                         unsigned long long now = now_ms();
                         unsigned long long delta = now - keys[k].last_event_ms;
-                        emit_key(fd_out, k, 0, NULL);
+                        post_debounce_event(k, 0, NULL);
                         keys[k].pressed = 0;
                         close(keys[k].timerfd);
                         keys[k].timerfd = -1;
