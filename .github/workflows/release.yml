@@ -6,13 +6,35 @@ on:
       - 'v*'
 
 jobs:
-  build-deb:
-    name: Build Debian packages
+  build-deb-amd64:
+    name: Build Debian package (amd64)
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        arch: [amd64, arm64]
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential gcc make libevdev-dev \
+            debhelper devscripts
+
+      - name: Build package
+        run: |
+          dpkg-buildpackage -us -uc -b --host-arch amd64
+          mkdir -p dist
+          mv ../*.deb dist/
+
+      - name: Upload deb artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: deb-amd64
+          path: dist/*.deb
+
+  build-deb-arm64:
+    name: Build Debian package (arm64)
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -20,45 +42,22 @@ jobs:
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential gcc make \
-            debhelper devscripts \
-            qemu-user-static binfmt-support
-
-      - name: Install arm64 cross-compilation deps
-        if: matrix.arch == 'arm64'
-        run: |
-          sudo dpkg --add-architecture arm64
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble main restricted universe multiverse" | sudo tee /etc/apt/sources.list.d/arm64-ports.list
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-updates main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/arm64-ports.list
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-security main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/arm64-ports.list
-          sudo apt-get update
-          sudo apt-get install -y \
-            gcc-aarch64-linux-gnu \
-            libevdev-dev:arm64
-
-      - name: Install amd64 deps
-        if: matrix.arch == 'amd64'
-        run: |
-          sudo apt-get install -y libevdev-dev
-
       - name: Build package
         run: |
-          VERSION=${GITHUB_REF_NAME#v}
-          if [ "${{ matrix.arch }}" = "arm64" ]; then
-            export CC=aarch64-linux-gnu-gcc
-          fi
-          dpkg-buildpackage -us -uc -b --host-arch ${{ matrix.arch }}
+          docker run --rm --platform linux/arm64 \
+            -v ${{ github.workspace }}:/build \
+            -w /build \
+            ubuntu:noble \
+            bash -c "apt-get update && apt-get install -y \
+              build-essential gcc make libevdev-dev debhelper devscripts && \
+              dpkg-buildpackage -us -uc -b"
           mkdir -p dist
           mv ../*.deb dist/
 
       - name: Upload deb artifact
         uses: actions/upload-artifact@v4
         with:
-          name: deb-${{ matrix.arch }}
+          name: deb-arm64
           path: dist/*.deb
 
   build-rpm:
@@ -102,7 +101,7 @@ jobs:
   release:
     name: Create release and update dist repo
     runs-on: ubuntu-latest
-    needs: [build-deb, build-rpm]
+    needs: [build-deb-amd64, build-deb-arm64, build-rpm]
     permissions:
       contents: write
     steps:
