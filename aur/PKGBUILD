@@ -1,6 +1,6 @@
 # Maintainer: Vincent Meadows <giantvince1@protonmail.com>
 pkgname=debounced
-pkgver=1.0
+pkgver=2.0
 pkgrel=1
 pkgdesc="Userspace keyboard debounce daemon with FlashTap support"
 arch=('x86_64' 'aarch64' 'riscv64')
