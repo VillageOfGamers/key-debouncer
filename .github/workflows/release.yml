@@ -53,13 +53,10 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
       - name: Install dependencies
         run: |
           dnf install -y gcc make libevdev-devel rpm-build rpmdevtools \
-            createrepo_c qemu-user-static
+            createrepo_c qemu-user-static binfmt-support
 
       - name: Set up RPM build tree
         run: rpmdev-setuptree
