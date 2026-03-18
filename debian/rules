@@ -3,4 +3,4 @@
 %:
 	dh $@
 override_dh_auto_install:
-	make install DESTDIR=$(DESTDIR) PREFIX=/usr SYSTEMD_UNITDIR=/usr/lib/systemd/system
+	make install DESTDIR=$(CURDIR)/debian/debounced PREFIX=/usr SYSTEMD_UNITDIR=/usr/lib/systemd/system
